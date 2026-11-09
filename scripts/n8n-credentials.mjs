@@ -83,6 +83,13 @@ const wanted = [
     }),
   },
   {
+    name: "Harbourline Slack",
+    type: "slackApi",
+    needs: ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"],
+    // The signing secret lets n8n verify that requests really come from Slack.
+    data: () => ({ accessToken: env.SLACK_BOT_TOKEN, signatureSecret: env.SLACK_SIGNING_SECRET }),
+  },
+  {
     name: "Harbourline MCP server",
     type: "httpBearerAuth",
     needs: ["MCP_AUTH_TOKEN"],

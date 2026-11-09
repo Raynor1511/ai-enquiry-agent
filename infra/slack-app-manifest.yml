@@ -1,0 +1,28 @@
+# Slack app for the approval step. Render it with your ngrok domain filled in:
+#   node scripts/slack-manifest.mjs
+# then paste at api.slack.com/apps -> Create New App -> From a manifest (YAML tab).
+display_information:
+  name: Harbourline Enquiries
+  description: Approve, edit or reject AI-drafted replies for the Harbourline demo (a fictional company).
+  background_color: "#0b6e69"
+features:
+  bot_user:
+    display_name: Harbourline Enquiries
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      # Post approval cards and alerts, and update a card once it has been decided.
+      - chat:write
+      # Look up the #enquiries and #alerts channel IDs.
+      - channels:read
+      # Show who approved, edited or rejected a draft in the audit log.
+      - users:read
+settings:
+  interactivity:
+    is_enabled: true
+    # Button clicks and the Edit pop-up are sent here (an n8n webhook, through the ngrok tunnel).
+    request_url: https://{{NGROK_DOMAIN}}/webhook/slack-interactions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

@@ -91,7 +91,18 @@ The credentials use narrow scopes:
 
 Re-run `google-calendar.mjs seed` whenever the demo calendar should show a fresh two weeks. It only replaces events it created.
 
-## 4. Start the stack
+## 4. Connect Slack
+
+1. Create public channels `#enquiries` (approval cards) and `#alerts` (emergencies and errors) in the demo workspace.
+2. Run `node scripts/slack-manifest.mjs` to print the app manifest with your ngrok domain filled in. Paste it at api.slack.com/apps → **Create New App** → **From a manifest**, using the YAML tab, then **Install to Workspace**.
+   - The bot scopes are `chat:write`, `channels:read` and `users:read`.
+   - Interactivity (button clicks and the Edit pop-up) goes to `https://<NGROK_DOMAIN>/webhook/slack-interactions`.
+3. Put the **Bot User OAuth Token** and the **Signing Secret** in `.env`, along with the two channel names.
+4. Invite the bot to both channels: `/invite @Harbourline Enquiries`.
+5. Run `node scripts/slack-setup.mjs --test-message`. It checks the token, confirms the bot is in both channels, saves their IDs to `.env`, and posts a test message.
+6. Run `node scripts/n8n-credentials.mjs` again to add the Slack credential to n8n.
+
+## 5. Start the stack
 
 ```bash
 docker compose up -d --build
