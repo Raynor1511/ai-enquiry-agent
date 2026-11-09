@@ -30,7 +30,7 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 
 | Phase | What | Status |
 | --- | --- | --- |
-| 0 | Accounts, n8n hosting, repo, seed data | Repo and seed data done; accounts in progress |
+| 0 | Accounts, n8n hosting, repo, seed data | **Done**: Supabase loaded, n8n + MCP + ngrok running in Docker ([setup](docs/setup.md)); Google and Slack still to connect |
 | 1 | Intake and classification (n8n) | Not started |
 | 2 | MCP server | **Done**: 4 tools, 114 tests, Docker image |
 | 3 | Drafting | Not started |
@@ -48,7 +48,8 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | [`seed/sql/`](seed/sql) | Postgres/Supabase schema, generated seed data, read-only role ([docs](docs/data-model.md)) |
 | [`eval/test-set/`](eval/test-set) | 40 labelled test enquiries, including emergencies, complaints, spam and 3 prompt-injection attempts ([docs](eval/README.md)) |
 | [`n8n/workflows/`](n8n/workflows) | Exported n8n workflows, credentials stripped (coming) |
-| [`scripts/`](scripts) | Seed SQL generator, test-set validator |
+| [`scripts/`](scripts) | `.env` setup, database setup, seed SQL generator, test-set validator |
+| [`docker-compose.yml`](docker-compose.yml), [`infra/`](infra) | Local stack: n8n, MCP server, and an ngrok tunnel that only exposes webhooks ([setup](docs/setup.md)) |
 
 ## Try the MCP server
 
