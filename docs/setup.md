@@ -6,7 +6,7 @@ How to run the whole stack on one machine: n8n, the MCP server and an ngrok tunn
 
 - Docker Desktop
 - Node 20+ (22 LTS recommended), for the setup scripts and tests
-- Accounts: Anthropic Console, Supabase, ngrok (free), Google and Slack (for later phases)
+- Accounts: Anthropic Console, Supabase, ngrok (free), a demo Google account, Slack
 
 ## 1. Configure `.env`
 
@@ -51,7 +51,47 @@ cd mcp-server && npm run test:pg
 
 Supabase signs its server certificates with its own CA, so the connection uses `sslmode=no-verify`: encrypted, but without certificate pinning. For a client deployment, download Supabase's CA certificate and verify against it.
 
-## 3. Start the stack
+## 3. Connect Google
+
+In the Google Cloud console, signed in with the demo Google account:
+
+1. **Project and APIs:** create a project, then enable the **Gmail API** and the **Google Calendar API** (APIs & Services → Library).
+2. **Consent screen:** Google Auth platform → Branding → Get Started.
+   - Set an app name and support email, choose **External**, and set a contact email.
+   - Under App domain, add the homepage and privacy policy URLs (this project uses a small public GitHub Pages site), and add their domain under Authorized domains. Don't upload a logo: a logo triggers Google's formal app review.
+   - Then go to Audience → **Publish app**. Apps left in "Testing" have their logins expire every 7 days.
+3. **OAuth client:** Google Auth platform → Clients → Create Client.
+   - Choose **Web application**, with the redirect URI `http://localhost:5678/rest/oauth2-credential/callback`.
+   - Copy the Client ID and secret into `.env` straight away: Google only shows the secret once.
+4. **Service account:** IAM & Admin → Service Accounts → Create, with no roles. Then Keys → Add key → JSON.
+   - Store the key file **outside the repo** and set `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` to its path.
+5. **Demo calendar:** in Google Calendar, create the demo calendar, set to London time.
+   - Share it with the service account's email, with **Make changes to events**. This lets the seed script add bookings.
+   - Put its Calendar ID in `GOOGLE_CALENDAR_ID`, and set `CALENDAR_SOURCE=google`.
+6. **n8n API key:** n8n → Settings → n8n API → Create an API key, then put it in `N8N_API_KEY`.
+
+Then:
+
+```bash
+node scripts/n8n-credentials.mjs                    # Gmail, Calendar, Anthropic, Postgres, MCP credentials
+cd mcp-server && npm run build
+node scripts/google-calendar.mjs seed               # two weeks of demo bookings, relative to today
+node scripts/google-calendar.mjs check              # read-only token: can read, cannot write
+```
+
+In n8n, open **Harbourline Gmail** and **Harbourline Calendar** and click **Sign in with Google** on each. Because the app is unverified, Google shows a warning: choose Advanced → Go to (app name).
+
+The credentials use narrow scopes:
+
+| Credential | Scopes |
+| --- | --- |
+| Gmail in n8n | `gmail.modify` and `gmail.labels`: read, send and label, but not permanently delete |
+| Calendar in n8n | `calendar.events` and `calendar.readonly` |
+| MCP server | `calendar.readonly` only. It reads free/busy times, never event details, and Google refuses its write attempts |
+
+Re-run `google-calendar.mjs seed` whenever the demo calendar should show a fresh two weeks. It only replaces events it created.
+
+## 4. Start the stack
 
 ```bash
 docker compose up -d --build

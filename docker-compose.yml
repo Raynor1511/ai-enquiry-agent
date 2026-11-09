@@ -44,8 +44,13 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_SSL: ${DATABASE_SSL:-require}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Run node scripts/init-env.mjs to generate MCP_AUTH_TOKEN}
+      CALENDAR_SOURCE: ${CALENDAR_SOURCE:-seed}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
+      GOOGLE_SERVICE_ACCOUNT_KEY_FILE: /run/secrets/google_calendar_sa
       FIXED_NOW: ${FIXED_NOW:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    secrets:
+      - google_calendar_sa
 
   ngrok:
     image: ngrok/ngrok:3.39.13-alpine
@@ -68,3 +73,9 @@ services:
 
 volumes:
   n8n_data:
+
+secrets:
+  # The Google service account key stays outside the repo and the image; it's mounted read-only.
+  # Without Google (CALENDAR_SOURCE=seed) a placeholder is mounted and never read.
+  google_calendar_sa:
+    file: ${GOOGLE_SERVICE_ACCOUNT_KEY_FILE:-./infra/google-key.placeholder.json}

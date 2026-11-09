@@ -6,7 +6,10 @@ export interface Config {
   seedDataDir: string;
   databaseUrl?: string;
   databaseSsl?: "require" | "no-verify" | "disable";
-  calendarSource: "seed";
+  /** seed = the relative template in calendar.json; google = Google Calendar free/busy (read-only). */
+  calendarSource: "seed" | "google";
+  googleCalendarId?: string;
+  googleServiceAccountKeyFile?: string;
   transport: "stdio" | "http";
   host: string;
   port: number;
@@ -45,7 +48,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: string[] 
     databaseSsl: env.DATABASE_SSL
       ? oneOf("DATABASE_SSL", env.DATABASE_SSL, ["require", "no-verify", "disable"] as const, "disable")
       : undefined,
-    calendarSource: oneOf("CALENDAR_SOURCE", env.CALENDAR_SOURCE, ["seed"] as const, "seed"),
+    calendarSource: oneOf("CALENDAR_SOURCE", env.CALENDAR_SOURCE, ["seed", "google"] as const, "seed"),
+    googleCalendarId: env.GOOGLE_CALENDAR_ID || undefined,
+    googleServiceAccountKeyFile: env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE || undefined,
     transport,
     host: flag(argv, "host") ?? env.HOST ?? "127.0.0.1",
     port,
@@ -55,6 +60,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, argv: string[] 
 
   if (config.dataSource === "postgres" && !config.databaseUrl) {
     throw new Error("DATA_SOURCE=postgres needs DATABASE_URL");
+  }
+  if (config.calendarSource === "google" && (!config.googleCalendarId || !config.googleServiceAccountKeyFile)) {
+    throw new Error("CALENDAR_SOURCE=google needs GOOGLE_CALENDAR_ID and GOOGLE_SERVICE_ACCOUNT_KEY_FILE");
   }
   if (config.transport === "http" && !config.authToken && !isLoopback(config.host)) {
     throw new Error("Refusing to serve HTTP on a non-local address without MCP_AUTH_TOKEN");

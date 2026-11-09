@@ -1,0 +1,1 @@
+{ "type": "placeholder", "note": "Mounted when GOOGLE_SERVICE_ACCOUNT_KEY_FILE is unset; only read when CALENDAR_SOURCE=google." }

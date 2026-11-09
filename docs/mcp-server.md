@@ -38,10 +38,20 @@ HTTP mode is stateless, with a fresh MCP server per request. It refuses to liste
 | `MCP_TRANSPORT` | `stdio` | `stdio` or `http` (or pass `--transport http`) |
 | `HOST` / `PORT` | `127.0.0.1` / `3333` | HTTP listen address |
 | `MCP_AUTH_TOKEN` | none | Bearer token for HTTP, at least 24 characters |
+| `CALENDAR_SOURCE` | `seed` | `seed` uses the template in `calendar.json`; `google` uses Google Calendar free/busy with a read-only service account |
+| `GOOGLE_CALENDAR_ID` | none | The demo calendar's ID (when `CALENDAR_SOURCE=google`) |
+| `GOOGLE_SERVICE_ACCOUNT_KEY_FILE` | none | Path to the service account JSON key. In Docker it's mounted as a read-only secret |
 | `FIXED_NOW` | none | Pin the clock (ISO timestamp) for repeatable demos and evaluation runs |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs are JSON lines on stderr |
 
-Calendar availability currently comes from the seed template (`seed/data/calendar.json`), which re-anchors to today so the next two weeks always look realistic. A Google Calendar free/busy provider will plug in behind the same `CalendarProvider` interface.
+Calendar availability comes from one of two `CalendarProvider`s, while the appointment rules (two-hour windows, 4-hour lead time, bank holidays) always come from `seed/data/calendar.json`:
+
+| Provider | How it gets busy times |
+| --- | --- |
+| **seed** | Uses the booking template, re-anchored to today, so the next two weeks always look realistic |
+| **google** | Calls Google Calendar's free/busy API as a service account. It requests only `calendar.readonly` and receives start and end times, never event titles or attendees. Its token is signed in-process with Node's crypto (no Google SDK) |
+
+`scripts/google-calendar.mjs seed` writes the same template into Google Calendar, so both providers return identical slots.
 
 ## Connecting clients
 

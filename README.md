@@ -30,9 +30,9 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 
 | Phase | What | Status |
 | --- | --- | --- |
-| 0 | Accounts, n8n hosting, repo, seed data | **Done**: Supabase loaded, n8n + MCP + ngrok running in Docker ([setup](docs/setup.md)); Google and Slack still to connect |
+| 0 | Accounts, n8n hosting, repo, seed data | **Done**: Supabase loaded, Google Calendar seeded, n8n + MCP + ngrok running in Docker ([setup](docs/setup.md)); Slack still to connect |
 | 1 | Intake and classification (n8n) | Not started |
-| 2 | MCP server | **Done**: 4 tools, 114 tests, Docker image |
+| 2 | MCP server | **Done**: 4 tools, 122 tests, Supabase and Google Calendar backends, Docker image |
 | 3 | Drafting | Not started |
 | 4 | Slack approval and actions | Not started |
 | 5 | Reliability and safety | Partly designed in (read-only role, dedupe key, audit tables) |
@@ -58,7 +58,7 @@ Requires Node 20+ (22 LTS recommended).
 ```bash
 cd mcp-server
 npm install
-npm test          # 92 tests; 114 with a Postgres database (see docs/mcp-server.md)
+npm test          # 100 tests; 122 with a Postgres database (see docs/mcp-server.md)
 npm run build
 npm run demo      # asks "Is this a returning customer, and what would a boiler service cost them?"
 ```
