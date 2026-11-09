@@ -1,0 +1,31 @@
+{
+  "_note": "Harbourline Plumbing & Heating is a FICTIONAL demo company. All names, emails (example.* domains reserved by RFC 2606) and phone numbers (Ofcom drama ranges) are made up.",
+  "name": "Harbourline Plumbing & Heating",
+  "is_demo": true,
+  "base_town": "Bristol",
+  "timezone": "Europe/London",
+  "currency": "GBP",
+  "phone": "0117 496 0123",
+  "email": "hello@harbourline-plumbing.example",
+  "website": "https://harbourline-plumbing.example",
+  "opening_hours": {
+    "monday_friday": "08:00-18:00",
+    "saturday": "09:00-13:00",
+    "sunday": "closed",
+    "emergency": "24/7 at emergency rates"
+  },
+  "team": [
+    { "name": "Dan Pritchard", "role": "Lead heating engineer (Gas Safe registered)" },
+    { "name": "Mia Collins", "role": "Plumber" },
+    { "name": "Ravi Shah", "role": "Bathroom fitter" },
+    { "name": "Claire Dunn", "role": "Office manager" }
+  ],
+  "tone_of_voice": [
+    "Friendly, calm and plain English; British spelling.",
+    "Short paragraphs. No jargon unless the customer used it first.",
+    "Always give a clear next step (book a slot, reply with details, or call us).",
+    "Quote prices only from the price list, as ranges where the list gives a range, and say the final price is confirmed on inspection.",
+    "Never promise an exact arrival time for emergencies; give the response target instead.",
+    "Sign off as: The Harbourline team, followed by the phone number."
+  ]
+}

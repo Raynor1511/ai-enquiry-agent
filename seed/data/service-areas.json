@@ -1,0 +1,48 @@
+{
+  "_note": "Coverage is decided by the outward code (the part of the postcode before the space). Districts not listed are outside the service area.",
+  "zones": [
+    {
+      "zone": "core",
+      "travel_surcharge": 0,
+      "response_target_minutes": 120,
+      "districts": {
+        "BS1": "Bristol city centre",
+        "BS2": "St Philips, St Pauls",
+        "BS3": "Bedminster, Southville",
+        "BS4": "Knowle, Brislington",
+        "BS5": "Easton, St George",
+        "BS6": "Cotham, Redland",
+        "BS7": "Bishopston, Horfield",
+        "BS8": "Clifton, Hotwells",
+        "BS9": "Westbury-on-Trym, Stoke Bishop",
+        "BS10": "Southmead, Henleaze",
+        "BS11": "Avonmouth, Shirehampton",
+        "BS13": "Bishopsworth, Hartcliffe",
+        "BS14": "Stockwood, Whitchurch",
+        "BS15": "Kingswood, Hanham",
+        "BS16": "Fishponds, Downend"
+      }
+    },
+    {
+      "zone": "extended",
+      "travel_surcharge": 25,
+      "response_target_minutes": 180,
+      "districts": {
+        "BS20": "Portishead, Pill",
+        "BS21": "Clevedon",
+        "BS30": "Warmley, Longwell Green",
+        "BS31": "Keynsham",
+        "BS32": "Bradley Stoke, Almondsbury",
+        "BS34": "Filton, Patchway",
+        "BS35": "Thornbury",
+        "BS36": "Frampton Cotterell, Winterbourne",
+        "BS37": "Yate, Chipping Sodbury",
+        "BS39": "Pensford, Temple Cloud",
+        "BS40": "Chew Valley, Wrington",
+        "BS41": "Long Ashton",
+        "BS48": "Nailsea, Backwell",
+        "BS49": "Yatton, Congresbury"
+      }
+    }
+  ]
+}

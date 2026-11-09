@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "harbourline": {
+      "command": "node",
+      "args": ["mcp-server/dist/index.js"],
+      "env": { "DATA_SOURCE": "json", "LOG_LEVEL": "warn" }
+    }
+  }
+}

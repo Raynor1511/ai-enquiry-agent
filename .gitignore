@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+
+# Secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Evaluation run outputs (the report is committed, raw runs are not)
+eval/runs/

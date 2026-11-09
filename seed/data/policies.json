@@ -1,0 +1,100 @@
+[
+  {
+    "id": "pol_callout_fees",
+    "title": "Call-out and labour charges",
+    "category": "fees",
+    "applies_to": ["all"],
+    "body": "There is no separate call-out fee for appointments booked in normal working hours; the price list applies. Repair visits include the first hour of labour, then £65 per hour. Parts are quoted before fitting. All prices include VAT."
+  },
+  {
+    "id": "pol_emergency",
+    "title": "Emergencies and out-of-hours",
+    "category": "emergency",
+    "applies_to": ["all"],
+    "body": "We attend emergencies 24/7: burst pipes, uncontrollable leaks, flooding, no water supply, and total loss of heating or hot water where someone vulnerable (elderly, very young, or with a medical condition) is in the home. Our target is to arrive within 2 hours in the core area and within 3 hours in the extended area. Emergency call-out is £120 including the first hour, then £80 per hour. Until we arrive, turn off the water at the stopcock if it is safe to do so."
+  },
+  {
+    "id": "pol_gas_safety",
+    "title": "Gas smells and carbon monoxide",
+    "category": "emergency",
+    "applies_to": ["all"],
+    "body": "If you smell gas or your carbon monoxide alarm goes off: do not use switches or flames, open doors and windows, turn off the gas at the meter if you can, leave the property, and call the National Gas Emergency Service on 0800 111 999 straight away. They make the supply safe for free. We can then repair the appliance once it has been made safe."
+  },
+  {
+    "id": "pol_hours",
+    "title": "Opening hours",
+    "category": "hours",
+    "applies_to": ["all"],
+    "body": "Office and booked appointments: Monday to Friday 08:00-18:00 and Saturday 09:00-13:00. Closed Sundays and bank holidays except for emergencies. Appointments are offered in two-hour arrival windows."
+  },
+  {
+    "id": "pol_service_area",
+    "title": "Service area and travel charges",
+    "category": "area",
+    "applies_to": ["all"],
+    "body": "Core area (no travel charge): Bristol postcodes BS1 to BS16. Extended area (£25 travel charge per visit): Portishead, Clevedon, Keynsham, Bradley Stoke, Thornbury, Yate, Nailsea and nearby BS postcodes. We do not currently cover Bath (BA), Gloucestershire (GL) or Weston-super-Mare (BS22-BS24)."
+  },
+  {
+    "id": "pol_cancellation",
+    "title": "Cancellations and missed appointments",
+    "category": "cancellation",
+    "applies_to": ["all"],
+    "body": "Appointments can be cancelled or moved free of charge up to 24 hours beforehand. Cancellations with less than 24 hours' notice are charged £40. If our engineer cannot get access at the booked time, a £60 missed-appointment fee applies."
+  },
+  {
+    "id": "pol_guarantee",
+    "title": "Guarantees",
+    "category": "guarantee",
+    "applies_to": ["all"],
+    "body": "All our workmanship is guaranteed for 12 months. If a repair we carried out fails within that period, we return and fix it free of charge. New boilers carry the manufacturer's warranty (up to 10 years) as long as they are serviced every year. Parts carry the manufacturer's warranty."
+  },
+  {
+    "id": "pol_quotes",
+    "title": "Quotes and surveys",
+    "category": "quotes",
+    "applies_to": ["all"],
+    "body": "Prices on our price list are guide prices; the final price is confirmed after inspection and agreed before work starts. Boiler replacements and bathroom refits need a free, no-obligation survey, after which we send a fixed written quote valid for 30 days."
+  },
+  {
+    "id": "pol_payment",
+    "title": "Payment terms",
+    "category": "payment",
+    "applies_to": ["all"],
+    "body": "Payment is due on completion by card or bank transfer. Boiler installations and bathroom refits need a 25% deposit to book, with the balance due on completion. Landlords and letting agents with an account can pay invoices within 14 days."
+  },
+  {
+    "id": "pol_landlords",
+    "title": "Landlords and letting agents",
+    "category": "landlords",
+    "applies_to": ["gas"],
+    "body": "We arrange access directly with tenants if the landlord or agent gives us their contact details, and email the CP12 certificate to the landlord the same day. Reminders are sent 30 days before each certificate expires."
+  },
+  {
+    "id": "pol_boiler_installs",
+    "title": "Boiler installations",
+    "category": "installations",
+    "applies_to": ["heating"],
+    "body": "Every new boiler includes removal of the old boiler, a chemical system flush, a magnetic filter, registration with Gas Safe and the manufacturer, and the first year's service reminder. Most combi swaps take one day; conversions from a regular to a combi boiler take two."
+  },
+  {
+    "id": "pol_bathrooms",
+    "title": "Bathroom projects",
+    "category": "installations",
+    "applies_to": ["bathrooms"],
+    "body": "Bathroom refits start with a free design visit. Typical refits take 7 to 10 working days. We can supply the suite and tiles or fit customer-supplied items (our 12-month workmanship guarantee applies either way)."
+  },
+  {
+    "id": "pol_complaints",
+    "title": "Complaints",
+    "category": "complaints",
+    "applies_to": ["all"],
+    "body": "We take every complaint seriously. We acknowledge complaints within one working day, and our office manager, Claire Dunn, aims to resolve them within 10 working days. If work we did is at fault, we put it right at no cost under our guarantee."
+  },
+  {
+    "id": "pol_privacy",
+    "title": "Customer privacy",
+    "category": "privacy",
+    "applies_to": ["all"],
+    "body": "We only discuss a customer's account, jobs or address with that customer (or the landlord or agent who booked the work). We never share customer details with third parties for marketing."
+  }
+]

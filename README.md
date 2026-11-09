@@ -1,0 +1,87 @@
+# AI Enquiry Agent
+
+A Claude-powered agent that reads incoming customer enquiries, looks up business context through a custom **MCP server**, drafts a reply, and **waits for a person to approve it** before anything is sent or changed.
+
+> **Demo company.** Harbourline Plumbing & Heating is fictional. Every customer, email address (reserved `example.*` domains) and phone number (Ofcom drama ranges) in this repository is made up.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Web form webhook] --> N[Normalise enquiry]
+    B[Gmail inbox] --> N
+    N --> D{Seen before?}
+    D -- yes --> X[Skip]
+    D -- no --> C[Classify with Claude<br/>fast model]
+    C -- spam --> S[Log and archive]
+    C -- emergency --> E[Instant Slack alert]
+    C --> G[Draft reply with Claude<br/>stronger model]
+    E --> G
+    G <-->|read-only tools| M[(MCP server<br/>customers, prices,<br/>area, calendar)]
+    G --> P[Slack card:<br/>Approve / Edit / Reject]
+    P -- approve or edit --> O[Send email, update records,<br/>tentative calendar hold]
+    P -- reject --> R[Log reason, close]
+    C & G & P & O --> L[(Audit log)]
+```
+
+Claude only reads and drafts. The MCP tools are read-only, both in code and at the database level, so every send, record change or booking waits for a person's click in Slack.
+
+## Status
+
+| Phase | What | Status |
+| --- | --- | --- |
+| 0 | Accounts, n8n hosting, repo, seed data | Repo and seed data done; accounts in progress |
+| 1 | Intake and classification (n8n) | Not started |
+| 2 | MCP server | **Done**: 4 tools, 114 tests, Docker image |
+| 3 | Drafting | Not started |
+| 4 | Slack approval and actions | Not started |
+| 5 | Reliability and safety | Partly designed in (read-only role, dedupe key, audit tables) |
+| 6 | Evaluation | **Labelled test set done** (40 enquiries); runner not started |
+| 7 | Packaging | Not started |
+
+## Repository layout
+
+| Path | Contents |
+| --- | --- |
+| [`mcp-server/`](mcp-server) | TypeScript MCP server: `find_customer`, `get_services`, `check_service_area`, `get_available_slots` ([docs](docs/mcp-server.md)) |
+| [`seed/data/`](seed/data) | Business data as JSON: services and prices, policies, service area, customers, job history, calendar template |
+| [`seed/sql/`](seed/sql) | Postgres/Supabase schema, generated seed data, read-only role ([docs](docs/data-model.md)) |
+| [`eval/test-set/`](eval/test-set) | 40 labelled test enquiries, including emergencies, complaints, spam and 3 prompt-injection attempts ([docs](eval/README.md)) |
+| [`n8n/workflows/`](n8n/workflows) | Exported n8n workflows, credentials stripped (coming) |
+| [`scripts/`](scripts) | Seed SQL generator, test-set validator |
+
+## Try the MCP server
+
+Requires Node 20+ (22 LTS recommended).
+
+```bash
+cd mcp-server
+npm install
+npm test          # 92 tests; 114 with a Postgres database (see docs/mcp-server.md)
+npm run build
+npm run demo      # asks "Is this a returning customer, and what would a boiler service cost them?"
+```
+
+The demo spawns the server over stdio, the same way Claude Desktop does, and answers using real tool calls:
+
+```text
+✓ Returning customer: Robert Marsh (cus_008), since 2024-10-01, 2 past jobs
+✓ BS31 2JA: Covered (extended area: Keynsham). A £25 travel charge applies per visit.
+✓ Annual gas boiler service: £95 (Fixed price per boiler.)
+
+A: Yes. A boiler service would cost them £120 (£95 + £25 travel).
+```
+
+To use it from **Claude Code**, open this folder after `npm run build`; the project's `.mcp.json` registers the server. For **Claude Desktop** and **n8n**, see [docs/mcp-server.md](docs/mcp-server.md).
+
+## Safety by design
+
+- **Read-only tools.** The MCP server has no write methods. In production it connects as a Postgres role that can only `SELECT` five reference tables, and every query runs in a `READ ONLY` transaction. Tests prove that inserts, updates, deletes and reads of pipeline tables are refused.
+- **Identity before disclosure.** Customers are only "verified" by the email or phone number on file. A name-only match returns masked details and no address or job history, so someone claiming to be a customer can't extract their data.
+- **Grounded prices.** Prices come only from `get_services`, already formatted (`£2,400–£3,800`), so drafts can be checked against what was retrieved.
+- **No customer data in logs.** Tool-call logs record which kinds of identifier were supplied, never their values.
+- **Authenticated HTTP.** Serving over the network requires a bearer token, compared in constant time.
+
+## Licence
+
+MIT
