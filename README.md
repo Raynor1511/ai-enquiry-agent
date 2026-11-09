@@ -31,12 +31,12 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | Phase | What | Status |
 | --- | --- | --- |
 | 0 | Accounts, n8n hosting, repo, seed data | **Done**: Supabase loaded, Google Calendar seeded, n8n + MCP + ngrok running in Docker ([setup](docs/setup.md)); Slack still to connect |
-| 1 | Intake and classification (n8n) | Not started |
+| 1 | Intake and classification (n8n) | **Done**: web form, Gmail and test webhook → Claude Haiku 5.5 → Supabase. 97.5% category accuracy, every emergency and injection caught ([pipeline](docs/pipeline.md), [report](eval/reports/phase-1-intake.md)) |
 | 2 | MCP server | **Done**: 4 tools, 122 tests, Supabase and Google Calendar backends, Docker image |
 | 3 | Drafting | Not started |
 | 4 | Slack approval and actions | Not started |
 | 5 | Reliability and safety | Partly designed in (read-only role, dedupe key, audit tables) |
-| 6 | Evaluation | **Labelled test set done** (40 enquiries); runner not started |
+| 6 | Evaluation | **Labelled test set and intake runner done** (`eval/run-intake.mjs`); drafting scores and a held-out set still to come |
 | 7 | Packaging | Not started |
 
 ## Repository layout
@@ -47,7 +47,7 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | [`seed/data/`](seed/data) | Business data as JSON: services and prices, policies, service area, customers, job history, calendar template |
 | [`seed/sql/`](seed/sql) | Postgres/Supabase schema, generated seed data, read-only role ([docs](docs/data-model.md)) |
 | [`eval/test-set/`](eval/test-set) | 40 labelled test enquiries, including emergencies, complaints, spam and 3 prompt-injection attempts ([docs](eval/README.md)) |
-| [`n8n/workflows/`](n8n/workflows) | Exported n8n workflows, credentials stripped (coming) |
+| [`n8n/`](n8n) | Pipeline logic (`src/`, unit-tested in `test/`), generated n8n workflows (`workflows/`, credentials stripped), build and deploy scripts |
 | [`scripts/`](scripts) | `.env` setup, database setup, seed SQL generator, test-set validator |
 | [`docker-compose.yml`](docker-compose.yml), [`infra/`](infra) | Local stack: n8n, MCP server, and an ngrok tunnel that only exposes webhooks ([setup](docs/setup.md)) |
 

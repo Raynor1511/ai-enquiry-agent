@@ -90,6 +90,13 @@ const wanted = [
     data: () => ({ accessToken: env.SLACK_BOT_TOKEN, signatureSecret: env.SLACK_SIGNING_SECRET }),
   },
   {
+    name: "Harbourline test webhook",
+    type: "httpHeaderAuth",
+    needs: ["TEST_WEBHOOK_KEY"],
+    // Protects the evaluation webhook (n8n/build.mjs -> Test intake).
+    data: () => ({ name: "X-Harbourline-Test-Key", value: env.TEST_WEBHOOK_KEY }),
+  },
+  {
     name: "Harbourline MCP server",
     type: "httpBearerAuth",
     needs: ["MCP_AUTH_TOKEN"],

@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const examplePath = path.join(root, ".env.example");
 const envPath = path.join(root, ".env");
 
-const GENERATED = { MCP_AUTH_TOKEN: 32, N8N_ENCRYPTION_KEY: 32 }; // bytes of randomness, hex-encoded
+const GENERATED = { MCP_AUTH_TOKEN: 32, N8N_ENCRYPTION_KEY: 32, TEST_WEBHOOK_KEY: 32 }; // bytes of randomness, hex-encoded
 
 const KEY_LINE = /^\s*([A-Z0-9_]+)\s*=(.*)$/;
 const keysIn = (text) => text.split(/\r?\n/).map((l) => KEY_LINE.exec(l)?.[1]).filter(Boolean);
