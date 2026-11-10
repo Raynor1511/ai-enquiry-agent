@@ -1145,6 +1145,11 @@ select e.id as enquiry_id, e.urgency, e.sender_name, e.classification->>'summary
  where e.status = 'awaiting_approval' and not e.is_test
  order by e.received_at;`;
 
+/** Demo data is kept this long, then deleted (docs/demo.md). */
+const DEMO_RETENTION_DAYS = 7;
+const PURGE_SQL = `-- The only deletion n8n can make: demo data past its retention (seed/sql/001_schema.sql).
+select slack_channel, slack_ts from purge_demo_data(${DEMO_RETENTION_DAYS});`;
+
 const REMINDER_SQL = `insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail)
 values ($1::uuid, $2, 'housekeeping', $3, $4::jsonb) returning id;`;
 
@@ -1225,6 +1230,13 @@ return $input.all().map((i, k) => {
   return { json: { params: [due[k].enquiry_id, String($execution.id), ok ? "approval_reminder" : "approval_reminder_failed", JSON.stringify(detail)] } };
 });`), "runOnceForAllItems"),
     pgNode("Log reminder", [1100, 600], REMINDER_SQL),
+
+    // --- 4. Delete demo enquiries past their retention, and their Slack cards
+    cron("Every day at 03:30", [0, 850], "30 3 * * *"),
+    pgNode("Purge old demo data", [220, 850], PURGE_SQL, null),
+    codeNode("Cards to delete", [440, 850], code(null, `
+return $input.all().filter((i) => i.json.slack_channel && i.json.slack_ts).map((i) => ({ json: { channel: i.json.slack_channel, ts: i.json.slack_ts } }));`), "runOnceForAllItems"),
+    slackApiNode("Slack: delete card", [660, 850], "chat.delete", "={{ JSON.stringify({ channel: $json.channel, ts: $json.ts }) }}"),
   ],
   [
     ["Every day at 07:00", "Hold search"],
@@ -1245,6 +1257,9 @@ return $input.all().map((i, k) => {
     ["Due reminders", "Slack: reminder"],
     ["Slack: reminder", "Reminder sent?"],
     ["Reminder sent?", "Log reminder"],
+    ["Every day at 03:30", "Purge old demo data"],
+    ["Purge old demo data", "Cards to delete"],
+    ["Cards to delete", "Slack: delete card"],
   ],
 );
 
@@ -1254,7 +1269,7 @@ return $input.all().map((i, k) => {
 export const SQL = {
   INSERT_SQL, SAVE_SQL, LOAD_SQL, SAVE_DRAFT_SQL, LOAD_CARD_SQL, SAVE_CARD_SQL,
   CLAIM_SQL, RECORD_SQL, REJECT_SQL, OUTCOME_SQL, LOAD_DRAFT_TEXT_SQL,
-  RELEASE_SQL, WAITING_SQL, REMINDER_SQL,
+  RELEASE_SQL, WAITING_SQL, REMINDER_SQL, PURGE_SQL,
 };
 
 export const WORKFLOWS = [

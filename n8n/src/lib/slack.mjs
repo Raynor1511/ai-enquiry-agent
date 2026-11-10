@@ -35,7 +35,7 @@ export function emergencyAlert(channel, enquiry, c) {
           { type: "mrkdwn", text: `*From*\n${who}` },
           { type: "mrkdwn", text: `*Postcode*\n${slackEscape(c.postcode || "not given", 20)}` },
           { type: "mrkdwn", text: `*Safety flags*\n${slackEscape(flags, 200)}` },
-          { type: "mrkdwn", text: `*Received*\n${ukTimeShort(enquiry.received_at)} by ${enquiry.source === "email" ? "email" : "web form"}${c.vulnerable_occupant ? "\n:warning: vulnerable occupant" : ""}` },
+          { type: "mrkdwn", text: `*Received*\n${ukTimeShort(enquiry.received_at)} by ${enquiry.source === "email" ? "email" : enquiry.source === "demo" ? "the live demo" : "web form"}${c.vulnerable_occupant ? "\n:warning: vulnerable occupant" : ""}` },
         ],
       },
       { type: "section", text: { type: "mrkdwn", text: `>${slackEscape(enquiry.body, 500).replace(/\n+/g, "\n>")}` } },

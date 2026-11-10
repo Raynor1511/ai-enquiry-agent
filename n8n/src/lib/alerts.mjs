@@ -143,7 +143,7 @@ export function failureAlertMessage(channel, p) {
   const from = [p.sender_name, p.sender_email].filter(Boolean).map((x) => slackEscape(x, 120)).join(" · ") || "unknown sender";
   const fields = [
     { type: "mrkdwn", text: `*From*\n${from}` },
-    { type: "mrkdwn", text: `*Received by*\n${p.source === "email" ? "email" : p.source === "webform" ? "web form" : "unknown"}` },
+    { type: "mrkdwn", text: `*Received by*\n${p.source === "email" ? "email" : p.source === "webform" ? "web form" : p.source === "demo" ? "the live demo" : "unknown"}` },
   ];
   if (p.subject) fields.push({ type: "mrkdwn", text: `*Subject*\n${slackEscape(p.subject, 150)}` });
   if (p.by) fields.push({ type: "mrkdwn", text: `*Approved by*\n${slackEscape(p.by, 80)}` });

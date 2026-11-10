@@ -1,4 +1,4 @@
-// Turns each enquiry source (web form, Gmail, test webhook) into one record shape.
+// Turns each enquiry source (web form, Gmail, the demo page, test webhook) into one record shape.
 // Pure functions: inlined into n8n Code nodes by n8n/build.mjs and unit-tested in n8n/test.
 
 export const MAX_BODY_CHARS = 20000;
@@ -80,6 +80,27 @@ export function fromForm(json, executionId) {
     body: f("message"),
     form_fields: { postcode: f("postcode"), service_needed: f("service") },
     received_at: json.submittedAt,
+  });
+}
+
+/**
+ * A confirmed submission from the demo page (a demo_sessions row). Only addresses that clicked the
+ * confirm link get this far. To the models it looks like a web-form enquiry (same fields), so the
+ * prompts and the evaluation results apply unchanged.
+ */
+export function fromDemo(session) {
+  const p = session?.payload ?? {};
+  if (!session?.id || !clean(session.email)) throw new Error("Demo submissions need an id and a confirmed email");
+  return finalise({
+    source: "demo",
+    message_id: `demo:${session.id}`,
+    sender_name: session.name,
+    sender_email: session.email,
+    sender_phone: p.phone ?? "",
+    subject: "",
+    body: p.message,
+    form_fields: { postcode: clean(p.postcode), service_needed: clean(p.service_needed) },
+    received_at: session.confirmed_at ?? new Date().toISOString(),
   });
 }
 

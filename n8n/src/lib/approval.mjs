@@ -223,7 +223,7 @@ export function approvalCard(channel, row) {
         type: "section",
         fields: [
           { type: "mrkdwn", text: `*From*\n${sender || "unknown"}` },
-          { type: "mrkdwn", text: `*Received*\n${ukTime(row.received_at)} by ${row.source === "email" ? "email" : "web form"}` },
+          { type: "mrkdwn", text: `*Received*\n${ukTime(row.received_at)} by ${sourceLabel(row.source)}` },
           { type: "mrkdwn", text: `*Customer*\n${customer}` },
           { type: "mrkdwn", text: `*Postcode*\n${slackEscape(c.postcode || "not given", 20)}` },
         ],
@@ -351,7 +351,7 @@ export function rejectModal(draftId, channel, ts) {
 /** Domains that can never receive mail (RFC 2606 / 6761): approving a reply to them is simulated, not sent. */
 export function isReservedAddress(email) {
   const domain = String(email ?? "").toLowerCase().split("@")[1] ?? "";
-  return !domain || /(^|\.)(example|test|invalid|localhost)$/.test(domain) || /^example\.(com|net|org|co\.uk)$/.test(domain);
+  return !domain || /(^|\.)(example|test|invalid|localhost)$/.test(domain) || /(^|\.)example\.(com|net|org|co\.uk)$/.test(domain);
 }
 
 /** How the reply goes out. Only ever to the stored sender address. */
@@ -375,6 +375,11 @@ export function splitName(name) {
 
 export const JOB_CATEGORIES = ["new_job_request", "quote_request", "emergency"];
 
+/** Where an enquiry came from, for the people reading the card. */
+export function sourceLabel(source) {
+  return source === "email" ? "email" : source === "demo" ? "the live demo" : "web form";
+}
+
 /** How long a tentative hold is kept before housekeeping releases it (unless someone confirms it). */
 export const HOLD_DAYS = 3;
 
@@ -389,7 +394,7 @@ export function holdEvents(slots, row, timezone = "Europe/London", nowMs = Date.
     .filter((s) => s?.start && s?.end && !Number.isNaN(Date.parse(s.start)) && !Number.isNaN(Date.parse(s.end)))
     .slice(0, 3)
     .map((s) => ({
-      summary: `HOLD (tentative): ${c.service_wanted ?? CATEGORY_LABEL[c.category] ?? "enquiry"} · ${row.sender_name ?? "customer"} (${district})`.slice(0, 200),
+      summary: `HOLD (tentative): ${c.service_wanted ?? CATEGORY_LABEL[c.category] ?? "enquiry"} · ${row.source === "demo" ? "demo visitor" : row.sender_name ?? "customer"} (${district})`.slice(0, 200),
       description: `Offered to the customer in an approved reply, not yet confirmed. Enquiry ${row.message_id}.\nReleased automatically on ${until} unless confirmed. To keep it, take "HOLD" out of the title.`,
       start: { dateTime: s.start, timeZone: timezone },
       end: { dateTime: s.end, timeZone: timezone },

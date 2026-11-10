@@ -124,6 +124,9 @@ create table if not exists enquiries (
   updated_at     timestamptz not null default now()
 );
 create index if not exists enquiries_status_idx on enquiries (status, received_at desc);
+-- Sources (re-created so existing databases pick up new ones): 'demo' is the self-serve demo page.
+alter table enquiries drop constraint if exists enquiries_source_check;
+alter table enquiries add constraint enquiries_source_check check (source in ('email', 'webform', 'demo'));
 -- Status values (re-created so existing databases pick up new ones). 'sending' is the lock that
 -- stops a reply being sent twice when two people click Approve.
 alter table enquiries drop constraint if exists enquiries_status_check;
@@ -203,6 +206,54 @@ create table if not exists audit_log (
 create index if not exists audit_log_enquiry_idx on audit_log (enquiry_id, created_at);
 
 -- ---------------------------------------------------------------------------
+-- The self-serve demo page (docs/demo.md). A visitor's submission waits here until they click the
+-- confirm link sent to their address; only then does it become an enquiry. The link's token is stored
+-- only as a SHA-256 hash, so a database leak doesn't expose anyone's private demo page.
+-- ---------------------------------------------------------------------------
+create table if not exists demo_sessions (
+  id            uuid primary key default gen_random_uuid(),
+  token_hash    text not null unique,
+  email         text not null,
+  name          text,
+  payload       jsonb not null,
+  status        text not null default 'pending' check (status in ('pending', 'confirmed')),
+  enquiry_id    uuid references enquiries (id) on delete set null,
+  created_at    timestamptz not null default now(),
+  confirmed_at  timestamptz
+);
+create index if not exists demo_sessions_created_idx on demo_sessions (created_at);
+
+-- Deletes demo data older than the retention period (and unconfirmed submissions after a day):
+-- the enquiries, their drafts, approvals, audit rows and jobs, the customers created from them, and
+-- the sessions. Returns the Slack cards of the deleted enquiries, for the caller to delete too.
+-- SECURITY DEFINER so n8n's role, which can't delete anything itself, can run exactly this.
+create or replace function purge_demo_data(older_than_days integer)
+returns table (slack_channel text, slack_ts text)
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  cutoff timestamptz := now() - make_interval(days => greatest(older_than_days, 1));
+  doomed uuid[];
+  msgs text[];
+begin
+  select array_agg(e.id), array_agg(e.message_id) into doomed, msgs
+    from enquiries e where e.source = 'demo' and e.received_at < cutoff;
+  if doomed is not null then
+    return query select d.slack_channel, d.slack_ts from drafts d where d.enquiry_id = any(doomed) and d.slack_ts is not null;
+    delete from audit_log a where a.enquiry_id = any(doomed);
+    delete from jobs j where j.source_enquiry_id = any(doomed)
+       or j.customer_id in (select c.id from customers c where c.notes like 'Created from approved enquiry %'
+                              and substr(c.notes, length('Created from approved enquiry ') + 1) = any(msgs));
+    delete from approvals ap where ap.enquiry_id = any(doomed);
+    delete from drafts d where d.enquiry_id = any(doomed);
+    delete from demo_sessions ds where ds.enquiry_id = any(doomed);
+    delete from enquiries e where e.id = any(doomed);
+    delete from customers c where c.notes like 'Created from approved enquiry %'
+       and substr(c.notes, length('Created from approved enquiry ') + 1) = any(msgs);
+  end if;
+  delete from demo_sessions ds where ds.created_at < cutoff or (ds.status = 'pending' and ds.created_at < now() - interval '1 day');
+end $$;
+
+-- ---------------------------------------------------------------------------
 -- updated_at triggers
 -- ---------------------------------------------------------------------------
 drop trigger if exists customers_updated_at on customers;
@@ -228,3 +279,4 @@ alter table enquiries              enable row level security;
 alter table drafts                 enable row level security;
 alter table approvals              enable row level security;
 alter table audit_log              enable row level security;
+alter table demo_sessions          enable row level security;
