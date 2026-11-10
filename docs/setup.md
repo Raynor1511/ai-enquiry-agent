@@ -131,4 +131,4 @@ node scripts/clear-test-data.mjs --live --apply          # also real enquiries, 
 node scripts/clear-test-data.mjs --live --older-than 90 --apply   # retention: only enquiries older than 90 days
 ```
 
-The dry run does the same deletes inside a transaction and rolls it back, so its counts are exact. Seed data (services, policies, the demo customers and their history) is never touched. It prints counts only. Emails in the demo mailbox and Slack messages other than approval cards are not removed; see [data protection](data-protection.md).
+`--keep-customers` keeps customer and job records (for retention clean-ups of old enquiries), and `--live --email <address>` removes one person's data for an erasure request. The dry run does the same deletes inside a transaction and rolls it back, so its counts are exact. Seed data (services, policies, the demo customers and their history) is never touched. It prints counts only. Emails in the demo mailbox and Slack messages other than approval cards are not removed; see [data protection](data-protection.md).

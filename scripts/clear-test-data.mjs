@@ -10,7 +10,11 @@
 //                                                        them, their tentative calendar holds and their
 //                                                        Slack approval cards
 //   ... --older-than 90                                  only enquiries received more than 90 days ago
-//                                                        (with --live: a retention clean-up)
+//   ... --keep-customers                                 keep customers and jobs (with --live --older-than:
+//                                                        a retention clean-up of old enquiries only)
+//   ... --live --email someone@example.com               one person's data (an erasure request): their
+//                                                        enquiries and everything above, plus any customer
+//                                                        record with that address and its jobs
 //
 // Seed data (services, policies, the 30 demo customers and their job history) is never touched.
 // The dry run performs the same deletes inside a transaction and rolls it back, so its counts
@@ -25,19 +29,27 @@ import { pathToFileURL } from "node:url";
 import { ROOT, readEnv } from "./lib/dotenv.mjs";
 
 const args = process.argv.slice(2);
-const apply = args.includes("--apply");
-const live = args.includes("--live");
-const olderIdx = args.indexOf("--older-than");
-const olderThan = olderIdx >= 0 ? Number(args[olderIdx + 1]) : null;
-if (olderIdx >= 0 && !(Number.isInteger(olderThan) && olderThan >= 0)) {
-  console.error("--older-than needs a whole number of days");
+const FLAGS = ["--apply", "--live", "--keep-customers"];
+const VALUES = ["--older-than", "--email"];
+const fail = (msg) => {
+  console.error(msg);
   process.exit(1);
+};
+const opts = {};
+for (let i = 0; i < args.length; i++) {
+  if (FLAGS.includes(args[i])) opts[args[i]] = true;
+  else if (VALUES.includes(args[i]) && args[i + 1] !== undefined) opts[args[i]] = args[++i];
+  else fail(`Unknown or incomplete option: ${args[i]}. See the comment at the top of this file.`);
 }
-const unknown = args.filter((a, i) => !["--apply", "--live", "--older-than"].includes(a) && !(olderIdx >= 0 && i === olderIdx + 1));
-if (unknown.length) {
-  console.error(`Unknown option(s): ${unknown.join(" ")}. See the comment at the top of this file.`);
-  process.exit(1);
-}
+const apply = Boolean(opts["--apply"]);
+const live = Boolean(opts["--live"]);
+const keepCustomers = Boolean(opts["--keep-customers"]);
+const olderThan = opts["--older-than"] === undefined ? null : Number(opts["--older-than"]);
+if (olderThan !== null && !(Number.isInteger(olderThan) && olderThan >= 0)) fail("--older-than needs a whole number of days");
+const email = opts["--email"] === undefined ? null : String(opts["--email"]).trim().toLowerCase();
+if (email !== null && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail("--email needs an email address");
+if (email !== null && !live) fail("--email is for real data: add --live");
+if (email !== null && keepCustomers) fail("--email removes the person's customer record too; don't combine it with --keep-customers");
 
 const env = readEnv();
 if (!env.SUPABASE_DB_URL) {
@@ -48,7 +60,7 @@ const pg = createRequire(path.join(ROOT, "mcp-server", "package.json"))("pg");
 const db = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: /localhost|127\.0\.0\.1/.test(env.SUPABASE_DB_URL) ? false : { rejectUnauthorized: false } });
 await db.connect();
 
-console.log(`Scope: ${live ? "all enquiries (test and real)" : "evaluation enquiries and synthetic leftovers"}${olderThan !== null ? `, received more than ${olderThan} day(s) ago` : ""}`);
+console.log(`Scope: ${email ? "one sender's enquiries and customer records" : live ? "all enquiries (test and real)" : "evaluation enquiries and synthetic leftovers"}${olderThan !== null ? `, received more than ${olderThan} day(s) ago` : ""}${keepCustomers ? ", keeping customers and jobs" : ""}`);
 console.log(apply ? "Deleting." : "Dry run: nothing will be deleted. Add --apply to delete.");
 
 const counts = {};
@@ -60,19 +72,24 @@ try {
   await db.query(`create temporary table doomed on commit drop as
     select id, message_id, is_test from enquiries
      where ($1::boolean or is_test or message_id like 'synthetic:%' or message_id like 'rolecheck:%')
-       and ($2::int is null or received_at < now() - make_interval(days => $2::int))`, [live, olderThan]);
+       and ($2::int is null or received_at < now() - make_interval(days => $2::int))
+       and ($3::text is null or lower(trim(sender_email)) = $3::text)`, [live, olderThan, email]);
   const n = async (sql) => Number((await db.query(sql)).rows[0].n);
   counts.enquiries_test = await n(`select count(*) n from doomed where is_test`);
   counts.enquiries_real = await n(`select count(*) n from doomed where not is_test`);
   // Approval cards to delete from Slack, before the drafts go.
   cards = (await db.query(`select distinct slack_channel, slack_ts from drafts where enquiry_id in (select id from doomed) and slack_ts is not null`)).rows;
-  // Customers that exist only because one of these enquiries was approved (never seed customers).
+  // Customers that exist only because one of these enquiries was approved (never seed customers),
+  // and for an erasure request any customer record with the person's address. None with --keep-customers.
   await db.query(`create temporary table doomed_customers on commit drop as
     select c.id from customers c
-     where c.notes like 'Created from approved enquiry %'
-       and substr(c.notes, length('Created from approved enquiry ') + 1) in (select message_id from doomed)`);
+     where not $1::boolean
+       and ((c.notes like 'Created from approved enquiry %'
+             and substr(c.notes, length('Created from approved enquiry ') + 1) in (select message_id from doomed))
+            or ($2::text is not null and lower(trim(c.email)) = $2::text))`, [keepCustomers, email]);
   counts.audit_rows = (await db.query(`delete from audit_log where enquiry_id in (select id from doomed)`)).rowCount;
-  counts.jobs = (await db.query(`delete from jobs where source_enquiry_id in (select id from doomed) or customer_id in (select id from doomed_customers)`)).rowCount;
+  // With --keep-customers, jobs survive their enquiry (the link is cleared by the foreign key).
+  counts.jobs = (await db.query(`delete from jobs where (not $1::boolean and source_enquiry_id in (select id from doomed)) or customer_id in (select id from doomed_customers)`, [keepCustomers])).rowCount;
   counts.approvals = (await db.query(`delete from approvals where enquiry_id in (select id from doomed)`)).rowCount;
   counts.drafts = (await db.query(`delete from drafts where enquiry_id in (select id from doomed)`)).rowCount;
   const enq = (await db.query(`delete from enquiries where id in (select id from doomed)`)).rowCount;
@@ -130,6 +147,6 @@ await db.end();
 
 const verb = apply ? "deleted" : "would delete";
 console.log(`  enquiries ${verb}: ${counts.enquiries_test + counts.enquiries_real} (evaluation/synthetic ${counts.enquiries_test}, real ${counts.enquiries_real})`);
-console.log(`  drafts ${counts.drafts} · approvals ${counts.approvals} · audit rows ${counts.audit_rows} · jobs ${counts.jobs} · customers created from enquiries ${counts.customers_created_from_enquiries}`);
+console.log(`  drafts ${counts.drafts} · approvals ${counts.approvals} · audit rows ${counts.audit_rows} · jobs ${counts.jobs} · customer records ${counts.customers_created_from_enquiries}`);
 if (live) console.log(`  calendar holds: ${holds.length} · Slack approval cards: ${cards.length}${apply && counts.slack_cards_deleted !== undefined ? ` (${counts.slack_cards_deleted} removed)` : ""}`);
 if (live) console.log("  Not touched: emails in the demo Gmail mailbox, Slack alerts and thread replies (remove by hand).");

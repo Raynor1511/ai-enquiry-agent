@@ -25,6 +25,11 @@ services:
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      # Execution history includes enquiry text and Claude's replies, so it is deleted after 14 days
+      # (n8n's defaults, stated here on purpose; see docs/data-protection.md).
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: "10000"
     volumes:
       - n8n_data:/home/node/.n8n
     depends_on:
