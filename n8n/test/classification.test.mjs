@@ -128,6 +128,20 @@ test("gas smells and CO alarms are always emergencies, whatever the model said",
   assert.deepEqual(cert.overrides, []);
 });
 
+test("no heating or hot water with a vulnerable occupant is always an emergency (the policy), and only that", () => {
+  const baby = { ...good(), category: "quote_request", urgency: "high", vulnerable_occupant: true, safety_flags: ["no_heating_or_hot_water"] };
+  const r = applySafetyRules(baby, enquiry("Need a quote for a new combi", "Boiler dead since Saturday, no heating or hot water, 3-week-old baby. Using a plug-in heater."));
+  assert.equal(r.classification.category, "emergency");
+  assert.equal(r.classification.urgency, "emergency");
+  assert.match(r.overrides.join(), /vulnerable occupant/);
+  // Either condition alone is not enough.
+  for (const c of [{ ...baby, vulnerable_occupant: false }, { ...baby, safety_flags: [] }]) {
+    assert.equal(applySafetyRules(c, enquiry("x", "y")).classification.category, "quote_request");
+  }
+  // Spam is never escalated by it.
+  assert.equal(applySafetyRules({ ...baby, category: "spam", urgency: "low" }, enquiry("x", "y")).classification.category, "spam");
+});
+
 test("category and urgency are kept consistent for emergencies", () => {
   const a = applySafetyRules({ ...good(), category: "emergency", urgency: "high" }, enquiry("water everywhere"));
   assert.equal(a.classification.urgency, "emergency");

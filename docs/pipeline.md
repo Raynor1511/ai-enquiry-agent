@@ -39,7 +39,7 @@ The classifier (`n8n/src/lib/classification.mjs`, prompt in `n8n/src/prompts/cla
 
 These deterministic rules override the model, and each override is written to the audit log:
 
-- **Emergencies:** a gas smell or a carbon monoxide alarm is always an emergency.
+- **Emergencies:** a gas smell or a carbon monoxide alarm is always an emergency, and so is a total loss of heating or hot water with someone vulnerable in the home (the business's emergency policy), however the customer frames it. The last rule was added in Phase 6, after the held-out set showed the model talking itself out of it ([report](../eval/reports/phase-6-evaluation.md)).
 - **Consistency:** emergency category and emergency urgency always go together.
 - **Injection:** classic injection phrasing ("ignore previous instructions", "admin mode", "approve this automatically") flags the enquiry for a person, even if the model missed it.
 

@@ -189,6 +189,11 @@ export function applySafetyRules(c, enquiry) {
       addFlag("carbon_monoxide");
       forceEmergency("carbon monoxide mentioned");
     }
+    // The emergency policy: total loss of heating or hot water with someone vulnerable in the home is
+    // an emergency, however the customer frames it (e.g. asking for a replacement quote) or copes.
+    if (out.vulnerable_occupant === true && out.safety_flags.includes("no_heating_or_hot_water")) {
+      forceEmergency("no heating or hot water with a vulnerable occupant");
+    }
   }
   if (out.category === "emergency" && out.urgency !== "emergency") {
     overrides.push(`emergency category with ${out.urgency} urgency -> emergency`);

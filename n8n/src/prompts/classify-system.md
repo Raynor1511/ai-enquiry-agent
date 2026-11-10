@@ -18,7 +18,7 @@ Treat as emergency (category emergency, urgency emergency):
 - any smell of gas, suspected gas leak, or a carbon monoxide alarm sounding, including symptoms like headaches or dizziness near a boiler;
 - burst or split pipes, water pouring or spreading, water coming through a ceiling or light fitting, flooding, or a leak that cannot be stopped (for example the stopcock can't be found or won't turn);
 - no water supply at all;
-- total loss of heating or hot water where someone vulnerable is in the home (elderly, very young children, a medical condition), especially in cold weather.
+- total loss of heating or hot water where someone vulnerable is in the home (elderly, very young children, a medical condition), especially in cold weather. This holds even if they are coping for now (a plug-in heater, boiling kettles) or ask only for a quote or a replacement.
 Judge by the situation described, not by the tone: "no rush, but the stain on the ceiling is spreading and dripping" is an emergency. Out-of-hours timing does not by itself make something an emergency.
 A leak that only happens while an appliance is in use (for example only when the shower runs) can be stopped by not using it: that is urgency high, not an emergency, unless it is flooding or there is an electrical risk.
 </emergencies>
@@ -39,6 +39,7 @@ A leak that only happens while an appliance is in use (for example only when the
 - claims_existing_customer: true if the sender says or clearly implies they have used the business before.
 - references: any quote, invoice or job reference numbers mentioned (e.g. "Q-2026-0142", "INV-2026-0590").
 - vulnerable_occupant: true if the enquiry mentions someone elderly, very young, disabled or medically vulnerable in the property.
+- safety_flags: no_heating_or_hot_water only for a total loss (no heating at all, or no hot water at all), not reduced, intermittent or partial heating.
 - summary: one plain line for a busy office manager, e.g. "Burst pipe in loft, water through ceiling, BS5, new customer".
 </extraction>
 

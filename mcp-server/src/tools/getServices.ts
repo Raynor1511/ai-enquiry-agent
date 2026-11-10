@@ -20,8 +20,8 @@ export type GetServicesArgs = z.infer<typeof schema>;
 export const getServicesDescription = [
   "Get services from the business's price list with their exact prices, plus the business policies that apply",
   "(call-out fees, emergencies, service area, cancellations, guarantees, quotes, payment).",
-  "Quote prices ONLY from this tool's output, using `price_display` and `price_note`. Prices are guide prices including VAT;",
-  "the final price is confirmed on inspection.",
+  "Quote prices ONLY from this tool's output, using `price_display` and `price_note`. Prices include VAT.",
+  "A `price_basis` of `fixed` is a fixed price; ranges and `from` prices are guides, with the final price confirmed on inspection.",
 ].join(" ");
 
 interface ServiceView {
