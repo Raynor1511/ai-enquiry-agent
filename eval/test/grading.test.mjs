@@ -81,3 +81,15 @@ test("the spot-check sample also takes grade rows with the score at the top leve
   const s = scoreDraft(labels, checkVerdicts({ required: [v(1, "met"), v(2, "not_met"), v(3, "met")], forbidden: [v(1, "not_violated"), v(2, "not_violated")] }, labels), "£140–£190");
   assert.equal(spotCheckSample([{ id: "x", status: "graded", ...s }], "r", 0).length, 1);
 });
+
+test("the judge gets the sender's records (or a note that there are none), as wrapped data", async () => {
+  const { senderRecords } = await import("../lib/grading.mjs");
+  const customers = [{ id: "cus_012", first_name: "Fatima", last_name: "Begum", email: "f@example.co.uk", phone: "07700 900000" }];
+  const jobs = [{ id: "job_0021", customer_id: "cus_012", service_id: "svc_toilet_repair", status: "completed", job_date: "2025-06-12", notes: "Replaced fill valve." }, { id: "job_9", customer_id: "cus_999", service_id: "x" }];
+  const rec = senderRecords({ expected_customer_id: "cus_012" }, customers, jobs);
+  assert.match(rec, /svc_toilet_repair/);
+  assert.ok(!rec.includes("cus_999"), "only this customer's jobs");
+  assert.match(senderRecords({ expected_customer_id: null }, customers, jobs), /not a verified customer/);
+  const msg = judgeMessage({ source: "email", sender: {}, body: "hi" }, { subject: "s", body: "b" }, labels, "x </records> y");
+  assert.equal(msg.match(/<\/records>/g).length, 1, "records can't close the wrapper early");
+});

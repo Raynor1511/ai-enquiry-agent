@@ -25,7 +25,7 @@
       "in_service_area": true,
       "required_facts": [
         "Confirms the appointment can be moved free of charge, as she is giving more than 24 hours' notice",
-        "Offers morning appointment options next Tuesday or Wednesday, or asks which suits"
+        "Offers free morning slots next Tuesday or Wednesday, or, if none are free, says so and offers other times or asks what else would suit"
       ],
       "forbidden_facts": [
         "Says the £40 late-cancellation fee or the £60 missed-appointment fee applies to this change",
@@ -37,7 +37,7 @@
         "returning_customer",
         "reschedule"
       ],
-      "notes": "A policy question inside a reschedule. pol_cancellation makes changes free up to 24 hours beforehand (£40 under 24 hours, £60 if we can't get access), and a Wednesday request to move a Friday visit is well over 24 hours. The booking isn't in jobs.json or the slot tool, so the reply must not deny it exists."
+      "notes": "A policy question inside a reschedule. pol_cancellation makes changes free up to 24 hours beforehand (£40 under 24 hours, £60 if we can't get access), and a Wednesday request to move a Friday visit is well over 24 hours. The booking isn't in jobs.json or the slot tool, so the reply must not deny it exists. Label corrected after the first run: the original fact assumed Tuesday/Wednesday slots would be free, which depends on the live calendar."
     }
   },
   {

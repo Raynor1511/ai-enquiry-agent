@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import { readEnv } from "../scripts/lib/dotenv.mjs";
-import { JUDGE_SCHEMA, JUDGE_SYSTEM, checkVerdicts, costOf, judgeMessage, scoreDraft, spotCheckSample, wilson } from "./lib/grading.mjs";
+import { JUDGE_SCHEMA, JUDGE_SYSTEM, checkVerdicts, costOf, judgeMessage, scoreDraft, senderRecords, spotCheckSample, wilson } from "./lib/grading.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const arg = (name, fallback) => {
@@ -27,6 +27,9 @@ const arg = (name, fallback) => {
 const flag = (name) => process.argv.includes(`--${name}`);
 const JUDGE = arg("judge", "claude-opus-5-5");
 const EFFORT = arg("effort", "medium");
+// Bump when the judge's prompt or inputs change: grades from different versions are never mixed or resumed.
+// v1: enquiry + reply + facts. v2: also the sender's business records.
+const GRADER_VERSION = 2;
 const CONCURRENCY = Number(arg("concurrency", 4));
 const CASE_CEILING_MS = 5 * 60_000; // hard wall-clock limit per draft, whatever the stream does
 const SETS = { main: "test-set/enquiries.json", "held-out": "test-set/held-out.json" };
@@ -34,6 +37,14 @@ const SETS = { main: "test-set/enquiries.json", "held-out": "test-set/held-out.j
 const env = readEnv();
 if (!env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is empty in .env");
 const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 4, timeout: 180_000 });
+// The business records the judge may consult (the same seed data the pipeline's database holds).
+const seed = (file) => {
+  const d = JSON.parse(readFileSync(path.join(here, "..", "seed", "data", file), "utf8"));
+  return Array.isArray(d) ? d : Object.values(d).find(Array.isArray);
+};
+const CUSTOMERS = seed("customers.json");
+const JOBS = seed("jobs.json");
+const recordsFor = (labels) => senderRecords(labels, CUSTOMERS, JOBS);
 const loadSet = (name) => {
   if (!SETS[name]) throw new Error(`unknown test set ${name}`);
   return new Map(JSON.parse(readFileSync(path.join(here, SETS[name]), "utf8")).map((e) => [e.id, e]));
@@ -58,7 +69,7 @@ async function judge(enquiry, draft, labels) {
           fallbacks: "default",
           system: JUDGE_SYSTEM,
           output_config: { effort: EFFORT, format: { type: "json_schema", schema: JUDGE_SCHEMA } },
-          messages: [{ role: "user", content: judgeMessage(enquiry, draft, labels) }],
+          messages: [{ role: "user", content: judgeMessage(enquiry, draft, labels, recordsFor(labels)) }],
         }),
         CASE_CEILING_MS,
       );
@@ -128,7 +139,7 @@ if (flag("selftest")) {
   });
   const pos = (o) => jobs.findIndex((j) => j.id === o.id && j.variant === o.variant);
   out.sort((a, b) => pos(a) - pos(b));
-  console.log(`Judge self-test · ${JUDGE} · effort ${EFFORT}\n`);
+  console.log(`Judge self-test · ${JUDGE} · effort ${EFFORT} · grader v${GRADER_VERSION}\n`);
   for (const o of out) console.log(`  ${o.ok ? "✓" : "✗"} ${o.id} · ${o.variant}: expected ${o.expect}, got ${o.got}`);
   const bad = out.filter((o) => !o.ok);
   for (const o of bad.filter((x) => x.score)) {
@@ -156,7 +167,7 @@ if (flag("fresh")) for (const f of [gradesFile, errorsFile]) if (existsSync(f)) 
 
 // Rows already graded by this judge at this effort are kept (resume after a crash or a partial run).
 const previous = existsSync(gradesFile)
-  ? readFileSync(gradesFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((g) => g.judge_model === JUDGE && g.effort === EFFORT)
+  ? readFileSync(gradesFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((g) => g.judge_model === JUDGE && g.effort === EFFORT && g.grader_version === GRADER_VERSION)
   : [];
 const done = new Set(previous.map((g) => g.id));
 
@@ -167,7 +178,7 @@ console.log(`Grading ${runId} (${setName} set): ${toGrade.length} enquiries that
 const fresh = [];
 await pool(pending, async (row) => {
   const e = set.get(row.id);
-  const base = { id: row.id, category: e.labels.category, is_injection: e.labels.is_injection, judge_model: JUDGE, effort: EFFORT, pipeline_checks: row.draft ? { prices_ok: row.draft.prices_ok, unsupported: row.draft.unsupported, contacts_ok: row.draft.contacts_ok, needs_review: row.draft.needs_review } : null };
+  const base = { id: row.id, category: e.labels.category, is_injection: e.labels.is_injection, judge_model: JUDGE, effort: EFFORT, grader_version: GRADER_VERSION, pipeline_checks: row.draft ? { prices_ok: row.draft.prices_ok, unsupported: row.draft.unsupported, contacts_ok: row.draft.contacts_ok, needs_review: row.draft.needs_review } : null };
   if (!row.draft?.drafted || !row.draft.body) {
     // No draft where one was needed is a failed case, not a grader error.
     const g = { ...base, status: "no_draft", pass: false, all_required: false, clean: true, required_met: 0, required_total: e.labels.required_facts.length, forbidden_violated: 0, forbidden_total: e.labels.forbidden_facts.length, disagreements: 0, required: [], forbidden: [], judge_cost_usd: 0 };
@@ -178,7 +189,7 @@ await pool(pending, async (row) => {
   const r = await judge(e, { subject: row.draft.subject, body: row.draft.body }, e.labels);
   const cost = judgeCost(r.attempts);
   if (!r.ok) {
-    appendFileSync(errorsFile, JSON.stringify({ id: row.id, judge_model: JUDGE, effort: EFFORT, failure: r.error, attempts: r.attempts, judge_cost_usd: cost }) + "\n");
+    appendFileSync(errorsFile, JSON.stringify({ id: row.id, judge_model: JUDGE, effort: EFFORT, grader_version: GRADER_VERSION, failure: r.error, attempts: r.attempts, judge_cost_usd: cost }) + "\n");
     return console.log(`  ${row.id}  GRADER ERROR ${r.error}`);
   }
   const s = scoreDraft(e.labels, r.verdicts, `${row.draft.subject}\n${row.draft.body}`);
@@ -194,7 +205,7 @@ await pool(pending, async (row) => {
 
 const order = new Map(toGrade.map((r, i) => [r.id, i]));
 const grades = [...previous, ...fresh].filter((g) => order.has(g.id)).sort((a, b) => order.get(a.id) - order.get(b.id));
-const errors = existsSync(errorsFile) ? readFileSync(errorsFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.judge_model === JUDGE && x.effort === EFFORT && !grades.some((g) => g.id === x.id)) : [];
+const errors = existsSync(errorsFile) ? readFileSync(errorsFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((x) => x.judge_model === JUDGE && x.effort === EFFORT && x.grader_version === GRADER_VERSION && !grades.some((g) => g.id === x.id)) : [];
 const n = grades.length;
 const count = (f) => grades.filter(f).length;
 const pct = (k, m) => (m ? `${((100 * k) / m).toFixed(1)}%` : "n/a");
@@ -224,7 +235,7 @@ const failingLines = grades.filter((g) => !g.pass).flatMap((g) => [
 const summary = [
   `# Fact grading: ${runId}`,
   "",
-  `${setName} set · ${n} drafts graded · judge ${JUDGE} (effort ${EFFORT}) · ${new Date().toISOString()}`,
+  `${setName} set · ${n} drafts graded · judge ${JUDGE} (effort ${EFFORT}, grader v${GRADER_VERSION}) · ${new Date().toISOString()}`,
   "",
   "| Measure | Result | 95% interval | Target |",
   "|---|---|---|---|",
@@ -289,7 +300,7 @@ const sheet = [
   }),
 ].join("\n");
 writeFileSync(path.join(runDir, "spot-check.md"), sheet);
-writeFileSync(path.join(runDir, "grades.json"), JSON.stringify({ run_id: runId, set: setName, judge_model: JUDGE, effort: EFFORT, grades, errors }, null, 2));
+writeFileSync(path.join(runDir, "grades.json"), JSON.stringify({ run_id: runId, set: setName, judge_model: JUDGE, effort: EFFORT, grader_version: GRADER_VERSION, grades, errors }, null, 2));
 
 console.log("\n" + summary.split("## Per draft")[0]);
 console.log(`Saved eval/runs/${runId}/grading.md, spot-check.md (${k} judgments), grades.json`);
