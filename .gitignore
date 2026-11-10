@@ -12,3 +12,4 @@ Thumbs.db
 
 # Evaluation run outputs (the report is committed, raw runs are not)
 eval/runs/
+secrets/
