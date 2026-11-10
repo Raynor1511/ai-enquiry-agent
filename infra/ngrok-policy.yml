@@ -1,15 +1,57 @@
-# ngrok traffic policy: only n8n's webhook and form endpoints are reachable from the internet.
-# The n8n editor, its REST API and login page stay private (open them at http://localhost:5678).
+# ngrok traffic policy for the public tunnel. Rules run in order; the free plan allows 5 per policy.
+#  1. Only n8n's webhook and form endpoints are reachable from the internet. The n8n editor, its
+#     REST API and login page stay private (open them at http://localhost:5678), and so does the
+#     evaluation webhook (eval/run-intake.mjs calls it on localhost).
+#  2. Every client IP gets at most 120 requests a minute (Slack's few calls are far below this).
+#  3. Form submissions are what cost money (each one is classified and drafted with Claude, about
+#     $0.04), so they are capped per client IP and in total. Over a limit, ngrok answers
+#     429 Too Many Requests with a retry-after header, and n8n never sees the request.
+# Buckets are counted per ngrok ingress server, so the totals are approximate (at most a few times
+# higher if requests land on different servers). Change the numbers here, then: docker compose restart ngrok
 on_http_request:
-  - expressions:
+  - name: Only webhooks and forms are public
+    expressions:
       - >-
         !(req.url.path.startsWith('/webhook/') ||
           req.url.path.startsWith('/webhook-test/') ||
           req.url.path.startsWith('/webhook-waiting/') ||
           req.url.path.startsWith('/form/') ||
           req.url.path.startsWith('/form-test/') ||
-          req.url.path.startsWith('/form-waiting/'))
+          req.url.path.startsWith('/form-waiting/')) ||
+        req.url.path.startsWith('/webhook/harbourline-test-intake')
     actions:
       - type: deny
         config:
           status_code: 404
+
+  - name: Requests per client IP
+    actions:
+      - type: rate-limit
+        config:
+          name: per-ip-all
+          algorithm: sliding_window
+          capacity: 120
+          rate: 60s
+          bucket_key:
+            - conn.client_ip
+
+  - name: Form submissions (each one costs a Claude call)
+    expressions:
+      - req.method == 'POST' && (req.url.path.startsWith('/form/') || req.url.path.startsWith('/form-test/'))
+    actions:
+      - type: rate-limit
+        config:
+          name: form-per-ip
+          algorithm: sliding_window
+          capacity: 5
+          rate: 10m
+          bucket_key:
+            - conn.client_ip
+      - type: rate-limit
+        config:
+          name: form-total
+          algorithm: sliding_window
+          capacity: 20
+          rate: 1h
+          bucket_key:
+            - req.host

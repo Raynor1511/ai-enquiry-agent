@@ -171,3 +171,17 @@ Tested: unit tests for the alert logic (shapes taken from real Error Trigger out
 n8n no longer connects as the database admin. Its Postgres credential uses the `n8n_writer` role, which can do exactly what the workflows do and nothing else: it can add rows and move an enquiry through its statuses, but it can't delete or truncate anything, rewrite a customer's message, a draft or an approval after the fact, read audit details, or change the schema. Updates are granted per column (an enquiry's status, classification and customer link; a draft's Slack location), so the audit trail can't be quietly edited even by a buggy or compromised workflow. See the [roles table](data-model.md#database-postgres--supabase).
 
 Tested: `scripts/db-setup.mjs` replays all 11 workflow queries as `n8n_writer` in pipeline order with the same parameters n8n sends (rolled back, no rows left) and checks that 10 forbidden statements are refused; a unit test fails if a workflow gains a query that isn't in that replay. After switching the credential, n8n's own connection test passed, the synthetic approve / edit / reject run and a classify + draft smoke test wrote their records normally, and the database showed n8n's connections as `n8n_writer`.
+
+### Rate limits on the public tunnel
+
+Only two things are public: the web form and the webhooks (Slack's interactions). The ngrok traffic policy (`infra/ngrok-policy.yml`) limits them before they reach n8n:
+
+| Limit | Why |
+| --- | --- |
+| 120 requests a minute per client IP, on every public path | Stops floods of forged Slack requests or page loads from filling n8n's execution log (forged Slack requests are already refused by the signature check) |
+| 5 form submissions per 10 minutes per client IP | Each submission is classified and drafted with Claude (about $0.04), so one person can't run up the bill |
+| 20 form submissions an hour in total | The same, for many addresses at once: at most about $0.80 an hour, on top of the spending limit set in the Anthropic console |
+
+Over a limit, ngrok answers `429 Too Many Requests` with a `retry-after` header, and n8n never sees the request. ngrok counts per ingress server, so the totals are approximate. The evaluation webhook is no longer reachable through the tunnel at all; the evaluation runner calls it on localhost.
+
+Tested through the public address: the form page loads; the editor, login, REST API and evaluation webhook get 404; an unsigned Slack request gets 401 and a genuine signed one 200; and a burst of six form submissions to a form path that doesn't exist (so n8n starts nothing) got five 404s from n8n and then a 429 from ngrok.

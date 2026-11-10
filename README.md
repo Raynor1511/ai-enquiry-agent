@@ -35,7 +35,7 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | 2 | MCP server | **Done**: 4 tools, 122 tests, Supabase and Google Calendar backends, Docker image |
 | 3 | Drafting | **Done**: Claude Sonnet 5.5 tool loop over the MCP server, grounded-price and contact checks, instant emergency alerts in Slack. 34/34 drafts, about $0.03 each ([report](eval/reports/phase-3-drafting.md)) |
 | 4 | Slack approval and actions | **Done**: approval card with Approve / Edit / Reject, signature-verified webhook, threaded Gmail replies, customer + job records, tentative calendar holds, outcome on the card ([pipeline](docs/pipeline.md#phase-4-approval-and-actions)) |
-| 5 | Reliability and safety | **In progress**: alerts in #alerts for every failed workflow and every handled failure (classification, draft, card, send, calendar holds), with repeat muting ([pipeline](docs/pipeline.md#phase-5-reliability-and-safety)). n8n now writes through a least-privilege database role (no deletes, no rewriting messages or drafts, no schema changes), proven query by query ([data model](docs/data-model.md#database-postgres--supabase)). Next: rate limits, housekeeping, test-data cleanup, data-protection notes |
+| 5 | Reliability and safety | **In progress**: alerts in #alerts for every failed workflow and every handled failure (classification, draft, card, send, calendar holds), with repeat muting ([pipeline](docs/pipeline.md#phase-5-reliability-and-safety)). n8n now writes through a least-privilege database role (no deletes, no rewriting messages or drafts, no schema changes), proven query by query ([data model](docs/data-model.md#database-postgres--supabase)); rate limits on the public tunnel, so form spam can't run up the Claude bill. Next: housekeeping, test-data cleanup, data-protection notes |
 | 6 | Evaluation | **Labelled test set and intake runner done** (`eval/run-intake.mjs`); drafting scores and a held-out set still to come |
 | 7 | Packaging | Not started |
 
@@ -49,7 +49,7 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | [`eval/test-set/`](eval/test-set) | 40 labelled test enquiries, including emergencies, complaints, spam and 3 prompt-injection attempts ([docs](eval/README.md)) |
 | [`n8n/`](n8n) | Pipeline logic (`src/`, unit-tested in `test/`), generated n8n workflows (`workflows/`, credentials stripped), build and deploy scripts |
 | [`scripts/`](scripts) | `.env` setup, database setup, seed SQL generator, test-set validator |
-| [`docker-compose.yml`](docker-compose.yml), [`infra/`](infra) | Local stack: n8n, MCP server, and an ngrok tunnel that only exposes webhooks ([setup](docs/setup.md)) |
+| [`docker-compose.yml`](docker-compose.yml), [`infra/`](infra) | Local stack: n8n, MCP server, and an ngrok tunnel that only exposes webhooks and the form, with rate limits ([setup](docs/setup.md)) |
 
 ## Try the MCP server
 

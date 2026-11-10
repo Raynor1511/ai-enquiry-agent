@@ -116,6 +116,6 @@ docker compose up -d --build
 | MCP server | `http://mcp-server:3333/mcp` from n8n; http://localhost:3333 from this machine | Bearer `MCP_AUTH_TOKEN` |
 | Public webhooks | `https://<NGROK_DOMAIN>/webhook/...` | For Slack and the web form |
 
-The ngrok traffic policy (`infra/ngrok-policy.yml`) passes only `/webhook*` and `/form*` paths to n8n. Everything else, including the editor, login and REST API, gets an empty 404 from ngrok. People opening the address in a browser see ngrok's free-plan warning page once; Slack and other server-to-server calls don't.
+The ngrok traffic policy (`infra/ngrok-policy.yml`) passes only `/webhook*` and `/form*` paths to n8n. Everything else, including the editor, login, REST API and the evaluation webhook (which `eval/run-intake.mjs` calls on localhost), gets an empty 404 from ngrok. It also rate-limits: 120 requests a minute per client IP, and form submissions (each one costs a Claude call) to 5 per 10 minutes per IP and 20 an hour in total; over a limit, ngrok answers `429 Too Many Requests` and n8n never sees the request. After editing the policy, run `docker compose restart ngrok`. People opening the address in a browser see ngrok's free-plan warning page once; Slack and other server-to-server calls don't.
 
 Stop with `docker compose down`. n8n's data lives in the `harbourline_n8n_data` volume and survives restarts; `down -v` deletes it.
