@@ -25,13 +25,23 @@ The JSON files in `seed/data/` are the single source of truth for the demo busin
 | `approvals` | n8n: approve, edit or reject, who decided, and the final text | No |
 | `audit_log` | n8n: every step, with model, tokens, cost and timing | No |
 
-Row-level security is on for every table. On Supabase that blocks the public API keys entirely; n8n writes as the table owner. The MCP server uses the `mcp_readonly` role from `003_roles.sql`: `SELECT` on the five reference tables only.
+Row-level security is on for every table. On Supabase that blocks the public API keys entirely. Each part of the system has its own database role (`003_roles.sql`), and the admin user is only used by setup scripts:
+
+| Role | Used by | Can | Cannot |
+| --- | --- | --- | --- |
+| `mcp_readonly` | MCP server | `SELECT` the five reference tables | Write anything, or see enquiries, drafts, approvals, audit |
+| `n8n_writer` | n8n | Read what the workflows read; add enquiries, drafts, approvals, customers, jobs, audit rows; change an enquiry's status, classification and customer link, and a draft's Slack location | Delete or truncate anything; rewrite a customer's message, a draft's text or an approval; read audit details; read policies or the service area; create or alter tables |
+| admin (`postgres`) | `scripts/db-setup.mjs`, cleanup scripts | Everything | (never given to a running service) |
+
+`n8n_writer` also has a 30-second statement timeout, so a stuck query can't hold locks. `scripts/db-setup.mjs` proves both roles: it replays every query the n8n workflows run as `n8n_writer` (inside a transaction that is rolled back) and checks that the forbidden statements are refused; a unit test makes sure every Postgres node's query is in that list.
 
 ## Loading into Supabase
 
+The easy way is `node scripts/db-setup.mjs` (see [setup](setup.md)). By hand:
+
 1. In the Supabase SQL editor, run `seed/sql/001_schema.sql`, then `002_seed.sql`, then `003_roles.sql`. All three are safe to re-run.
-2. Give the read-only role a password (choose your own, and don't commit it):
-   `alter role mcp_readonly with login password '...';`
-3. Set the MCP server's `DATABASE_URL` to the pooler connection string with the user `mcp_readonly.<project-ref>`, and set `DATA_SOURCE=postgres`.
+2. Give both roles a password (choose your own, and don't commit them):
+   `alter role mcp_readonly with login password '...';` and `alter role n8n_writer with login password '...';`
+3. Set the MCP server's `DATABASE_URL` to the pooler connection string with the user `mcp_readonly.<project-ref>`, and set `DATA_SOURCE=postgres`. Set `N8N_DB_URL` the same way with `n8n_writer.<project-ref>`; n8n's Postgres credential is built from it.
 
 After editing any JSON file, regenerate the SQL with `node scripts/build-seed-sql.mjs` and re-run `002_seed.sql`.

@@ -3,6 +3,9 @@
 // Skips any credential whose name already exists. Prints names and ids only, never secrets.
 // Google credentials still need a one-time "Sign in with Google" click in the n8n editor.
 // Run: node scripts/n8n-credentials.mjs
+//      node scripts/n8n-credentials.mjs --update "Supabase Postgres (n8n writes)"
+//        replaces an existing credential's data from .env (e.g. after db-setup rotated a password)
+//        and asks n8n to test it. Not allowed for the Google credentials: it would drop their sign-in.
 import { readEnv } from "./lib/dotenv.mjs";
 
 const env = readEnv();
@@ -11,6 +14,7 @@ if (!env.N8N_API_KEY) {
   console.error("N8N_API_KEY is empty in .env");
   process.exit(1);
 }
+const updates = process.argv.flatMap((a, i, all) => (a === "--update" && all[i + 1] ? [all[i + 1]] : []));
 
 const api = async (method, path, body) => {
   const res = await fetch(`${N8N}/api/v1${path}`, {
@@ -23,7 +27,8 @@ const api = async (method, path, body) => {
   return text ? JSON.parse(text) : {};
 };
 
-const db = new URL(env.SUPABASE_DB_URL.replace(/^postgresql:/, "postgres:"));
+// n8n writes as the least-privilege n8n_writer role (seed/sql/003_roles.sql), never as the admin user.
+const db = env.N8N_DB_URL ? new URL(env.N8N_DB_URL.replace(/^postgresql:/, "postgres:")) : null;
 // Like the pg driver: decode %XX escapes, but keep a password with a bare "%" as written.
 const decode = (s) => {
   try {
@@ -69,7 +74,7 @@ const wanted = [
   {
     name: "Supabase Postgres (n8n writes)",
     type: "postgres",
-    needs: ["SUPABASE_DB_URL"],
+    needs: ["N8N_DB_URL"], // written by scripts/db-setup.mjs
     data: () => ({
       host: db.hostname,
       port: Number(db.port || 5432),
@@ -112,12 +117,40 @@ do {
   cursor = page.nextCursor;
 } while (cursor);
 
+const OAUTH = new Set(["gmailOAuth2", "googleCalendarOAuth2Api"]);
+for (const name of updates) {
+  const cred = wanted.find((c) => c.name === name);
+  if (!cred) throw new Error(`--update: no credential called "${name}" in this script`);
+  if (OAUTH.has(cred.type)) throw new Error(`--update: "${name}" is a Google sign-in; reconnect it in the n8n editor instead`);
+  if (!existing.has(name)) throw new Error(`--update: "${name}" doesn't exist in n8n yet; run without --update to create it`);
+}
+
+/** Ask n8n to connect with a stored credential (prints n8n's verdict, never the data). */
+async function testCredential(id, name) {
+  try {
+    const r = await api("POST", `/credentials/${id}/test`);
+    console.log(`    test: ${r.status}${r.message ? ` (${r.message})` : ""}`);
+    if (r.status !== "OK") process.exitCode = 1;
+  } catch (err) {
+    console.log(`    test of ${name} could not run: ${err.message.slice(0, 200)}`);
+    process.exitCode = 1;
+  }
+}
+
 for (const cred of wanted) {
+  const missing = cred.needs.filter((k) => !env[k]);
   if (existing.has(cred.name)) {
-    console.log(`  = ${cred.name} [${cred.type}] already exists (id ${existing.get(cred.name).id})`);
+    const id = existing.get(cred.name).id;
+    if (!updates.includes(cred.name)) {
+      console.log(`  = ${cred.name} [${cred.type}] already exists (id ${id})`);
+      continue;
+    }
+    if (missing.length) throw new Error(`--update ${cred.name}: missing ${missing.join(", ")} in .env`);
+    await api("PATCH", `/credentials/${id}`, { data: cred.data() });
+    console.log(`  ~ ${cred.name} [${cred.type}] updated from .env (id ${id})`);
+    await testCredential(id, cred.name);
     continue;
   }
-  const missing = cred.needs.filter((k) => !env[k]);
   if (missing.length) {
     console.log(`  - ${cred.name}: skipped, missing ${missing.join(", ")} in .env`);
     continue;

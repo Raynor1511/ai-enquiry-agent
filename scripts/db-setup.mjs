@@ -5,13 +5,19 @@
 //   3. gives the read-only mcp_readonly role a fresh random password and login
 //   4. writes the read-only connection to DATABASE_URL / DATABASE_SSL in .env
 //   5. connects as mcp_readonly and checks it can read but not write
-// Options: --keep-password  reuse the password already in DATABASE_URL instead of rotating it
+//   6. the same for n8n's least-privilege role n8n_writer (N8N_DB_URL): replays every query the
+//      workflows run (rolled back) and checks that deleting, rewriting and DDL are refused
+// Options: --keep-password  reuse the passwords already in DATABASE_URL / N8N_DB_URL instead of rotating them
+// After a rotation: docker compose up -d mcp-server, and
+//                   node scripts/n8n-credentials.mjs --update "Supabase Postgres (n8n writes)"
 // Run: node scripts/db-setup.mjs   (after: node scripts/build-seed-sql.mjs if seed JSON changed)
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { ROOT, readEnv, updateEnv } from "./lib/dotenv.mjs";
+import { checkForbidden, checkWorkflowQueries } from "./lib/n8n-role-check.mjs";
+import { SQL } from "../n8n/build.mjs";
 
 const require = createRequire(path.join(ROOT, "mcp-server", "package.json"));
 const pg = require("pg");
@@ -91,6 +97,19 @@ if (keep && env.DATABASE_URL) {
   await db.query(`alter role mcp_readonly with login password ${db.escapeLiteral(password)}`);
   ok("login enabled with a new random password");
 }
+
+step("Setting up n8n's least-privilege role n8n_writer");
+let writerPassword;
+let writerRotated = false;
+if (keep && env.N8N_DB_URL) {
+  writerPassword = decodeURIComponent(new URL(env.N8N_DB_URL).password);
+  ok("keeping the existing password");
+} else {
+  writerPassword = randomBytes(24).toString("hex");
+  await db.query(`alter role n8n_writer with login password ${db.escapeLiteral(writerPassword)}`);
+  writerRotated = true;
+  ok("login enabled with a new random password");
+}
 await db.end();
 
 const ro = new URL(admin.href);
@@ -99,8 +118,12 @@ ro.password = password;
 ro.search = "?sslmode=no-verify";
 if (ssl === false) ro.search = "";
 const readOnlyUrl = ro.href;
-updateEnv({ DATABASE_URL: readOnlyUrl, DATABASE_SSL: ssl === false ? "disable" : "no-verify" });
-ok("wrote DATABASE_URL and DATABASE_SSL to .env");
+const w = new URL(ro.href);
+w.username = isSupabasePooler ? `n8n_writer.${projectRef}` : "n8n_writer";
+w.password = writerPassword;
+const writerUrl = w.href;
+updateEnv({ DATABASE_URL: readOnlyUrl, DATABASE_SSL: ssl === false ? "disable" : "no-verify", N8N_DB_URL: writerUrl });
+ok("wrote DATABASE_URL, DATABASE_SSL and N8N_DB_URL to .env");
 
 step("Checking the read-only connection");
 let roDb;
@@ -130,4 +153,26 @@ for (const [label, sql] of [
 }
 await roDb.end();
 
+step("Checking the n8n_writer connection");
+let wDb;
+try {
+  wDb = await connect(writerUrl);
+} catch (err) {
+  die(`n8n_writer could not connect: ${err.message}`);
+}
+ok(`connected as ${(await wDb.query("select current_user")).rows[0].current_user}`);
+try {
+  const passed = await checkWorkflowQueries(wDb, SQL);
+  ok(`all ${passed.length} workflow queries allowed (replayed in a transaction, then rolled back)`);
+} catch (err) {
+  await wDb.end();
+  die(`a workflow query is not allowed for n8n_writer: ${err.message}`);
+}
+const wrongly = await checkForbidden(wDb);
+await wDb.end();
+if (wrongly.length) die(`n8n_writer was able to: ${wrongly.join(", ")}`);
+ok("cannot delete, truncate, rewrite messages/drafts/approvals, read audit details or create tables (permission denied)");
+
 console.log("\nDone. To make the MCP server read from the database, set DATA_SOURCE=postgres in .env.");
+if (!keep) console.log("Passwords were rotated: restart the MCP server with  docker compose up -d mcp-server");
+if (writerRotated) console.log('Give n8n the new n8n_writer password:  node scripts/n8n-credentials.mjs --update "Supabase Postgres (n8n writes)"');

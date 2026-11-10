@@ -39,9 +39,11 @@ node scripts/db-setup.mjs
 The script:
 
 1. Applies `seed/sql/001_schema.sql`, `002_seed.sql` and `003_roles.sql`. All three are idempotent.
-2. Gives the `mcp_readonly` role a fresh random password.
-3. Writes the read-only connection to `DATABASE_URL`.
-4. Connects as that role to prove it can read but not write.
+2. Gives the MCP server's read-only role `mcp_readonly` and n8n's least-privilege role `n8n_writer` fresh random passwords (`--keep-password` keeps the current ones).
+3. Writes their connections to `DATABASE_URL` and `N8N_DB_URL`.
+4. Connects as `mcp_readonly` to prove it can read but not write, and as `n8n_writer` to prove it can run every workflow query (rolled back afterwards) but can't delete, rewrite or create anything.
+
+After a password rotation, restart the MCP server (`docker compose up -d mcp-server`) and give n8n the new password with `node scripts/n8n-credentials.mjs --update "Supabase Postgres (n8n writes)"`, which also has n8n test the connection.
 
 Then set `DATA_SOURCE=postgres` in `.env`, and check that the MCP server returns the same answers from the database as from the JSON files:
 

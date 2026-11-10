@@ -726,6 +726,8 @@ select ${CARD_COLUMNS}
   join drafts d on d.id = $1::uuid
   left join customers c on c.id = d.customer_id;`;
 
+const LOAD_DRAFT_TEXT_SQL = `select subject, body from drafts where id = $1::uuid;`;
+
 const OUTCOME_SQL = `insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail)
 values ($1::uuid, $2, 'approval', 'outcome', $3::jsonb) returning enquiry_id;`;
 
@@ -864,7 +866,7 @@ return [{ json: { update, outcome, holds_ok: $json.holds_ok ?? 0, holds_failed: 
     codeNode("Edit modal", [1540, 320], code("approval", `
 const r = $json.route;
 return { json: { trigger_id: r.trigger_id, view: editModal(r.draft_id, r.channel, r.ts, r.subject, r.body) } };`)),
-    pgNode("Load draft text", [1540, 480], `select subject, body from drafts where id = $1::uuid;`, "={{ [$json.route.draft_id] }}"),
+    pgNode("Load draft text", [1540, 480], LOAD_DRAFT_TEXT_SQL, "={{ [$json.route.draft_id] }}"),
     codeNode("Edit modal (long draft)", [1760, 480], code("approval", `
 const r = $("Acknowledge Slack").first().json.route;
 return { json: { trigger_id: r.trigger_id, view: editModal(r.draft_id, r.channel, r.ts, $json.subject, $json.body) } };`)),
@@ -1064,6 +1066,12 @@ return $input.all();`), "runOnceForAllItems"),
 );
 
 // ---------------------------------------------------------------------------------------------
+
+/** Every query the workflows run, so scripts/db-setup.mjs can prove the n8n_writer role allows each one. */
+export const SQL = {
+  INSERT_SQL, SAVE_SQL, LOAD_SQL, SAVE_DRAFT_SQL, LOAD_CARD_SQL, SAVE_CARD_SQL,
+  CLAIM_SQL, RECORD_SQL, REJECT_SQL, OUTCOME_SQL, LOAD_DRAFT_TEXT_SQL,
+};
 
 export const WORKFLOWS = [
   // Alerts first: every other workflow names it as its error workflow and calls it for handled failures.

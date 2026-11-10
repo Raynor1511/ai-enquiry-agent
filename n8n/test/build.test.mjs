@@ -120,3 +120,11 @@ test("the deployed Alerts code posts, mutes repeats in static data, and fails lo
   await assert.rejects(runNode(WF.alerts, "Posted?", { input: [{ ok: false, error: "channel_not_found" }] }), /Slack refused 1 alert\(s\): channel_not_found/);
   assert.equal((await runNode(WF.alerts, "Posted?", { input: [{ ok: true }] })).length, 1);
 });
+
+test("every Postgres query in the workflows is one that db-setup replays as the n8n_writer role", async () => {
+  const { SQL } = await import("../build.mjs");
+  const known = new Set(Object.values(SQL));
+  const queries = all.flatMap((wf) => wf.nodes.filter((n) => n.type === "n8n-nodes-base.postgres").map((n) => [wf.name, n.name, n.parameters.query]));
+  assert.ok(queries.length >= 11);
+  for (const [wf, node, q] of queries) assert.ok(known.has(q), `${wf} / ${node}: add its query to SQL in n8n/build.mjs and to scripts/lib/n8n-role-check.mjs`);
+});
