@@ -57,6 +57,15 @@ export async function checkWorkflowQueries(client, SQL) {
     await run("interactions: log outcome", SQL.OUTCOME_SQL, [enquiryId, EXEC, "{}"]);
     // Already sent, so the reject claims nothing, but every table and column it touches is still checked.
     await run("interactions: record rejection", SQL.REJECT_SQL, [draftId, "role-check", "", "check", EXEC, "{}"], false);
+    // The demo page: start, confirm, link to an enquiry, find its draft.
+    const tokenHash = "0".repeat(48) + Date.now().toString(16).padStart(16, "0");
+    const started = await run("demo: record pending session", SQL.DEMO_START_SQL, [tokenHash, "role.check@example.com", "Role Check", '{"message":"check"}', "1000000", "1000000"]);
+    if (!started.session_id) throw new Error("demo: record pending session inserted nothing");
+    const confirmed = await run("demo: confirm session", SQL.DEMO_CONFIRM_SQL, [tokenHash, "1000000"]);
+    if (confirmed.id !== started.session_id) throw new Error("demo: confirm session did not confirm it");
+    await run("demo: link session to enquiry", SQL.DEMO_LINK_SQL, [started.session_id, enquiryId]);
+    const found = await run("demo: find the draft", SQL.DEMO_FIND_DRAFT_SQL, [tokenHash]);
+    if (found.draft_id !== draftId) throw new Error("demo: find the draft did not find it");
   } finally {
     await client.query("rollback");
   }

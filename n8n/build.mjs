@@ -26,6 +26,7 @@ export const WF = {
   testIntake: "Harbourline · Test intake (eval)",
   alerts: "Harbourline · Alerts",
   housekeeping: "Harbourline · Housekeeping",
+  demo: "Harbourline · Demo",
 };
 export const CRED = {
   postgres: "Supabase Postgres (n8n writes)",
@@ -35,8 +36,15 @@ export const CRED = {
   mcp: "Harbourline MCP server",
   slack: "Harbourline Slack",
   calendar: "Harbourline Calendar",
+  demo: "Harbourline demo service",
 };
-export const PATHS = { form: "harbourline-enquiry", testWebhook: "harbourline-test-intake", slack: "slack-interactions" };
+export const PATHS = {
+  form: "harbourline-enquiry", testWebhook: "harbourline-test-intake", slack: "slack-interactions",
+  // Called only by the demo service on the private network (the public gate refuses them).
+  demoStart: "harbourline-demo-start", demoConfirm: "harbourline-demo-confirm", demoDecide: "harbourline-demo-decide",
+};
+/** Daily limits for the live demo: submissions, enquiries actually run through Claude, and per address. */
+export const DEMO_CAPS = { starts: 60, runs: 30, per_email: 3 };
 
 const CLASSIFIER_MODEL = process.env.CLASSIFIER_MODEL || "claude-haiku-5-5";
 const DRAFTING_MODEL = process.env.DRAFTING_MODEL || "claude-sonnet-5-5";
@@ -98,6 +106,13 @@ const LIB = {
     `const MODEL = ${JSON.stringify(CLASSIFIER_MODEL)};`,
   ],
 };
+
+LIB.demo = [
+  ...LIB.approval,
+  inline("n8n/src/lib/demo.mjs"),
+  `const DEMO_CAPS = ${JSON.stringify(DEMO_CAPS)};`,
+  `const PUBLIC_HOST = "__ENV__PUBLIC_HOST";`,
+];
 
 const code = (lib, body) => {
   const libs = [...new Set((Array.isArray(lib) ? lib : lib ? [lib] : []).flatMap((l) => LIB[l]))].join("\n");
@@ -1303,12 +1318,195 @@ return $input.all().filter((i) => i.json.slack_channel && i.json.slack_ts).map((
 );
 
 // ---------------------------------------------------------------------------------------------
+// 9. Demo: the self-serve demo page (demo/ service). Start a submission and email its confirm link,
+//    confirm it (then run the normal pipeline), and decide on its draft through Decide reply.
+
+const DEMO_START_SQL = `-- Record a pending demo submission, unless today's limits are reached (all submissions, and per address).
+with counts as (
+  select count(*)::int as starts_24h, (count(*) filter (where lower(email) = lower($2)))::int as by_email_24h
+    from demo_sessions where created_at > now() - interval '24 hours'
+), ins as (
+  insert into demo_sessions (token_hash, email, name, payload)
+  select $1, $2, nullif($3, ''), $4::jsonb from counts
+   where counts.starts_24h < $5::int and counts.by_email_24h < $6::int
+  on conflict (token_hash) do nothing
+  returning id
+)
+select (select id from ins) as session_id, starts_24h, by_email_24h from counts;`;
+
+const DEMO_CONFIRM_SQL = `-- Confirm a pending submission (once, within a day of it being sent), unless today's demo runs are used up.
+with s as (
+  select id, status, created_at from demo_sessions where token_hash = $1
+), runs as (
+  select count(*)::int as n from demo_sessions where status = 'confirmed' and confirmed_at > now() - interval '24 hours'
+), upd as (
+  update demo_sessions d set status = 'confirmed', confirmed_at = now()
+    from s
+   where d.id = s.id and d.status = 'pending' and s.created_at > now() - interval '1 day'
+     and (select n from runs) < $2::int
+  returning d.id, d.email, d.name, d.payload, to_char(d.confirmed_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as confirmed_at
+)
+select s.status as prior_status, coalesce(s.created_at < now() - interval '1 day', false) as expired, (select n from runs) as runs_24h,
+       upd.id, upd.email, upd.name, upd.payload, upd.confirmed_at
+  from (select 1) as one left join s on true left join upd on true;`;
+
+const DEMO_LINK_SQL = `with u as (
+  update demo_sessions set enquiry_id = nullif($2, '')::uuid where id = $1::uuid and enquiry_id is null returning id
+)
+select (select id from u) as linked_id;`;
+
+const DEMO_FIND_DRAFT_SQL = `-- The latest draft of a confirmed demo session's enquiry, and whether it still waits for a decision.
+select d.id as draft_id, e.status as enquiry_status
+  from (select 1) as one
+  left join demo_sessions s on s.token_hash = $1 and s.status = 'confirmed'
+  left join enquiries e on e.id = s.enquiry_id
+  left join lateral (select id from drafts where enquiry_id = e.id order by version desc limit 1) d on true;`;
+
+const demoHook = (name, position, path) => ({
+  name, type: "n8n-nodes-base.webhook", typeVersion: 2, position, webhookId: uuid(`webhook/${path}`),
+  parameters: { httpMethod: "POST", path, authentication: "headerAuth", responseMode: "responseNode", options: {} },
+  credentials: cred("httpHeaderAuth", CRED.demo),
+});
+const respondJson = (name, position, expr, responseCode = 200) =>
+  respondNode(name, position, { respondWith: "json", responseBody: `={{ JSON.stringify(${expr}) }}`, options: { responseCode } });
+
+const demoEmailAlert = alertBranch("Email sent?", 1980, -400, `
+const r = $input.first().json;
+if (r.ok) return [];
+const s = $("Check start").first().json.session;
+${emit(`failureAlert("demo_email_failed", { enquiry: { sender_name: s.name, sender_email: s.email, source: "demo" }, error: r.error_detail, workflow: $workflow.name, execution_id: $execution.id })`)}`);
+
+const demo = workflow(
+  WF.demo,
+  [
+    // --- 1. Start: record the submission and email the confirm link
+    demoHook("Demo start", [0, 0], PATHS.demoStart),
+    codeNode("Check start", [220, 0], code("demo", `
+const r = checkStart($input.first().json.body);
+if (!r.ok) return [{ json: { ok: false, error: r.error } }];
+const s = r.session;
+return [{ json: { ok: true, session: s, params: [s.token_hash, s.email, s.name, JSON.stringify(s.payload), String(DEMO_CAPS.starts), String(DEMO_CAPS.per_email)] } }];`), "runOnceForAllItems"),
+    ifTrue("Valid start?", [440, 0], "$json.ok"),
+    respondJson("Start refused", [660, 160], "{ ok: false, error: $json.error }", 400),
+    pgNode("Record pending session", [660, -80], DEMO_START_SQL),
+    codeNode("Recorded?", [880, -80], code("demo", `
+const s = $("Check start").first().json.session;
+const row = $input.first().json;
+if (!row.session_id) return [{ json: { ok: false, error: Number(row.by_email_24h) >= DEMO_CAPS.per_email ? "email_limit" : "daily_limit" } }];
+return [{ json: { ok: true, to: s.email, reserved: isReservedAddress(s.email), ...confirmEmail(PUBLIC_HOST, s.token, s.name) } }];`), "runOnceForAllItems"),
+    ifTrue("Session recorded?", [1100, -80], "$json.ok"),
+    respondJson("Start limited", [1320, 80], "{ ok: false, error: $json.error }", 429),
+    ifTrue("Real address?", [1320, -160], "!$json.reserved"),
+    {
+      name: "Gmail: send confirm link", type: "n8n-nodes-base.gmail", typeVersion: 2.1, position: [1540, -240],
+      parameters: { resource: "message", operation: "send", sendTo: "={{ $json.to }}", subject: "={{ $json.subject }}", emailType: "text", message: "={{ $json.body }}", options: gmailOptions },
+      credentials: cred("gmailOAuth2", CRED.gmail),
+      retryOnFail: true, maxTries: 2, waitBetweenTries: 2000, onError: "continueRegularOutput",
+    },
+    codeNode("Email sent?", [1760, -240], code(null, `
+const res = $input.first().json;
+const ok = Boolean(res.id) && !res.error;
+return [{ json: { ok, error: ok ? null : "email_failed", error_detail: ok ? null : String(res.error?.message ?? res.error ?? "Gmail returned no message id").slice(0, 300) } }];`), "runOnceForAllItems"),
+    ...demoEmailAlert.nodes,
+    respondJson("Started", [1980, -240], "{ ok: $json.ok, emailed: $json.ok, error: $json.error }"),
+    // Test addresses (example.com and the like) get no email: the confirm link comes back to the caller
+    // instead. Only the live probe uses this; the demo service refuses such addresses (docs/demo.md).
+    respondJson("Started (test address)", [1540, -80], "{ ok: true, emailed: false, confirm_link: $json.link }"),
+
+    // --- 2. Confirm: the visitor pressed "Start my demo" on the confirm page
+    demoHook("Demo confirm", [0, 500], PATHS.demoConfirm),
+    codeNode("Check confirm", [220, 500], code("demo", `
+const h = $input.first().json.body?.token_hash;
+return [{ json: { ok: isTokenHash(h), params: [h, String(DEMO_CAPS.runs)] } }];`), "runOnceForAllItems"),
+    ifTrue("Valid link?", [440, 500], "$json.ok"),
+    respondJson("Confirm refused", [660, 660], '{ ok: false, status: "unknown" }', 400),
+    pgNode("Confirm session", [660, 420], DEMO_CONFIRM_SQL),
+    codeNode("Confirm outcome", [880, 420], code("demo", `
+const row = $input.first().json;
+const status = confirmOutcome(row, DEMO_CAPS.runs);
+return [{ json: { status, session: status === "confirmed" ? { id: row.id, email: row.email, name: row.name, payload: row.payload, confirmed_at: row.confirmed_at } : null } }];`), "runOnceForAllItems"),
+    ifTrue("Newly confirmed?", [1100, 420], `$json.status === "confirmed"`),
+    respondJson("Not confirmed", [1320, 580], `{ ok: $json.status === "already", status: $json.status }`),
+    // Answer straight away; the page then polls while the enquiry runs through the normal pipeline.
+    respondJson("Confirmed", [1320, 420], '{ ok: true, status: "confirmed" }'),
+    codeNode("Normalise demo enquiry", [1540, 420], code("normalise", `return [{ json: fromDemo($("Confirm outcome").first().json.session) }];`), "runOnceForAllItems"),
+    callClassify("Classify (demo)", [1760, 420]),
+    codeNode("Link params", [1980, 420], code(null, `
+return [{ json: { params: [$("Confirm outcome").first().json.session.id, $input.first().json.enquiry_id ?? ""] } }];`), "runOnceForAllItems"),
+    pgNode("Link session to enquiry", [2200, 420], DEMO_LINK_SQL),
+    codeNode("Classified", [2420, 420], code(null, `return [{ json: $("Classify (demo)").first().json }];`), "runOnceForAllItems"),
+    callDraft("Draft reply (demo)", [2640, 420]),
+    callApproval("Post for approval (demo)", [2860, 420]),
+
+    // --- 3. Decide: approve, edit or reject on the demo page (the same path as Slack's buttons)
+    demoHook("Demo decide", [0, 1000], PATHS.demoDecide),
+    codeNode("Check decision", [220, 1000], code("demo", `
+const r = checkDecision($input.first().json.body);
+return [{ json: r.ok ? { ok: true, decision: r.decision, params: [r.decision.token_hash] } : { ok: false, error: r.error } }];`), "runOnceForAllItems"),
+    ifTrue("Valid decision?", [440, 1000], "$json.ok"),
+    respondJson("Decision refused", [660, 1160], "{ ok: false, error: $json.error }", 400),
+    pgNode("Find the draft", [660, 920], DEMO_FIND_DRAFT_SQL),
+    codeNode("Route decision", [880, 920], code("demo", `
+return [{ json: decideRoute($("Check decision").first().json.decision, $input.first().json) }];`), "runOnceForAllItems"),
+    ifTrue("Waiting for a decision?", [1100, 920], "$json.ok"),
+    respondJson("Nothing to decide", [1320, 1080], "{ ok: false, status: $json.status }", 409),
+    // Decide reply returns nothing if the draft was decided meanwhile (e.g. in Slack): still answer.
+    { ...callWorkflow("Decide (demo)", [1320, 920], WF.decide), alwaysOutputData: true },
+    codeNode("Decision outcome", [1540, 920], code(null, `
+const r = $input.first()?.json ?? {};
+return [{ json: r.decision ? { ok: true, decision: r.decision, status: r.status } : { ok: false, status: "already decided" } }];`), "runOnceForAllItems"),
+    respondJson("Decided", [1760, 920], "$json", 200),
+  ],
+  [
+    ["Demo start", "Check start"],
+    ["Check start", "Valid start?"],
+    ["Valid start?", "Record pending session", 0],
+    ["Valid start?", "Start refused", 1],
+    ["Record pending session", "Recorded?"],
+    ["Recorded?", "Session recorded?"],
+    ["Session recorded?", "Real address?", 0],
+    ["Session recorded?", "Start limited", 1],
+    ["Real address?", "Gmail: send confirm link", 0],
+    ["Real address?", "Started (test address)", 1],
+    ["Gmail: send confirm link", "Email sent?"],
+    ...demoEmailAlert.edges,
+    ["Email sent?", "Started"],
+    ["Demo confirm", "Check confirm"],
+    ["Check confirm", "Valid link?"],
+    ["Valid link?", "Confirm session", 0],
+    ["Valid link?", "Confirm refused", 1],
+    ["Confirm session", "Confirm outcome"],
+    ["Confirm outcome", "Newly confirmed?"],
+    ["Newly confirmed?", "Confirmed", 0],
+    ["Newly confirmed?", "Not confirmed", 1],
+    ["Confirmed", "Normalise demo enquiry"],
+    ["Normalise demo enquiry", "Classify (demo)"],
+    ["Classify (demo)", "Link params"],
+    ["Link params", "Link session to enquiry"],
+    ["Link session to enquiry", "Classified"],
+    ["Classified", "Draft reply (demo)"],
+    ["Draft reply (demo)", "Post for approval (demo)"],
+    ["Demo decide", "Check decision"],
+    ["Check decision", "Valid decision?"],
+    ["Valid decision?", "Find the draft", 0],
+    ["Valid decision?", "Decision refused", 1],
+    ["Find the draft", "Route decision"],
+    ["Route decision", "Waiting for a decision?"],
+    ["Waiting for a decision?", "Decide (demo)", 0],
+    ["Waiting for a decision?", "Nothing to decide", 1],
+    ["Decide (demo)", "Decision outcome"],
+    ["Decision outcome", "Decided"],
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
 
 /** Every query the workflows run, so scripts/db-setup.mjs can prove the n8n_writer role allows each one. */
 export const SQL = {
   INSERT_SQL, SAVE_SQL, LOAD_SQL, SAVE_DRAFT_SQL, LOAD_CARD_SQL, SAVE_CARD_SQL,
   CLAIM_SQL, RECORD_SQL, REJECT_SQL, OUTCOME_SQL, LOAD_DRAFT_TEXT_SQL,
   RELEASE_SQL, WAITING_SQL, REMINDER_SQL, PURGE_SQL,
+  DEMO_START_SQL, DEMO_CONFIRM_SQL, DEMO_LINK_SQL, DEMO_FIND_DRAFT_SQL,
 };
 
 export const WORKFLOWS = [
@@ -1323,6 +1521,8 @@ export const WORKFLOWS = [
   { file: "intake.json", workflow: intake, activate: true },
   { file: "test-intake.json", workflow: testIntake, activate: true },
   { file: "housekeeping.json", workflow: housekeeping, activate: true },
+  // Calls Classify, Draft, Post for approval and Decide reply, so it comes after them.
+  { file: "demo.json", workflow: demo, activate: true },
 ];
 
 for (const { workflow: wf } of WORKFLOWS) checkReferences(wf);

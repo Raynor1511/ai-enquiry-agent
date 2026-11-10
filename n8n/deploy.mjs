@@ -52,6 +52,7 @@ const ENV_ALLOWED = {
   SLACK_ALERTS_CHANNEL_ID: /^[A-Z0-9]{8,14}$/,
   SLACK_APPROVAL_CHANNEL_ID: /^[A-Z0-9]{8,14}$/,
   GOOGLE_CALENDAR_ID: /^[a-z0-9._-]+@group\.calendar\.google\.com$/,
+  PUBLIC_HOST: /^[a-z0-9-]+(\.[a-z0-9-]+)+$/, // the demo's confirm link
 };
 const SECRET_ALLOWED = { SLACK_SIGNING_SECRET: /^[0-9a-f]{32}$/ };
 function resolve(wf) {

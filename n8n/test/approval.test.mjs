@@ -85,7 +85,7 @@ const row = {
   review_reason: "", customer_id: "cus_008", customer_name: "Robert Marsh",
   enquiry_id: "e-1", source: "email", message_id: "gmail:abc", sender_name: "Rob Marsh", sender_email: "r.marsh.fixture.harbourline@gmail.com", sender_phone: "",
   received_at: "2026-11-10T09:00:00Z",
-  classification: { category: "new_job_request", urgency: "normal", summary: "Boiler service, BS31", postcode: "BS31 2JA", injection_suspected: false, service_wanted: "boiler service" },
+  classification: { category: "new_job_request", urgency: "normal", summary: "Boiler service, BS31", postcode: "BS31 2JA", injection_suspected: false, service_wanted: "boiler service", service_ids: ["svc_boiler_service"] },
 };
 
 test("the approval card shows the essentials, escapes the draft and carries the draft id on every button", () => {
@@ -175,6 +175,6 @@ test("holds are tentative, tagged with the enquiry, and limited to the offered s
   assert.equal(events.length, 1);
   assert.equal(events[0].status, "tentative");
   assert.equal(events[0].extendedProperties.private.harbourlineHold, "e-1");
-  assert.match(events[0].summary, /HOLD \(tentative\): boiler service · Rob Marsh \(BS31\)/);
+  assert.equal(events[0].summary, "HOLD (tentative): boiler service · BS31");
   assert.deepEqual(holdEvents(null, row), []);
 });

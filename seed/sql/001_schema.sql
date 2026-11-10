@@ -253,6 +253,73 @@ begin
   delete from demo_sessions ds where ds.created_at < cutoff or (ds.status = 'pending' and ds.created_at < now() - interval '1 day');
 end $$;
 
+-- What a demo visitor's live page shows, for the holder of that page's link (the token's SHA-256).
+-- The demo service's database role may run only this function: it can't read any table, and this
+-- returns one session's own enquiry and nothing else (no ids, no audit details, no other customers).
+-- Returns null for an unknown token.
+create or replace function demo_view(p_token_hash text)
+returns jsonb
+language plpgsql stable security definer set search_path = public, pg_temp as $$
+declare
+  s demo_sessions%rowtype;
+  e enquiries%rowtype;
+  d drafts%rowtype;
+  result jsonb;
+begin
+  if p_token_hash is null or p_token_hash !~ '^[0-9a-f]{64}$' then
+    return null;
+  end if;
+  select * into s from demo_sessions where token_hash = p_token_hash;
+  if not found then
+    return null;
+  end if;
+  result := jsonb_build_object(
+    'session', jsonb_build_object('status', s.status, 'created_at', s.created_at, 'confirmed_at', s.confirmed_at,
+                                  'name', s.name, 'payload', s.payload - 'phone'),
+    'retention_days', 7);
+  if s.enquiry_id is null then
+    select * into e from enquiries where message_id = 'demo:' || s.id;
+  else
+    select * into e from enquiries where id = s.enquiry_id;
+  end if;
+  if e.id is null then
+    return result;
+  end if;
+  result := result || jsonb_build_object('enquiry', jsonb_build_object(
+    'status', e.status, 'received_at', e.received_at, 'category', e.category, 'urgency', e.urgency,
+    'is_suspicious', e.is_suspicious,
+    'classification', (select coalesce(jsonb_object_agg(k, v), '{}'::jsonb) from jsonb_each(coalesce(e.classification, '{}'::jsonb)) as x(k, v)
+                        where k in ('category', 'urgency', 'urgency_reason', 'summary', 'postcode', 'service_wanted', 'service_ids',
+                                    'claims_existing_customer', 'vulnerable_occupant', 'safety_flags', 'injection_suspected',
+                                    'injection_evidence', 'needs_human_review', 'review_reason', 'confidence'))));
+  select * into d from drafts where enquiry_id = e.id order by version desc limit 1;
+  if d.id is not null then
+    result := result || jsonb_build_object('draft', jsonb_build_object(
+      'version', d.version, 'subject', d.subject, 'body', d.body, 'reasoning', d.reasoning, 'confidence', d.confidence,
+      'tools_used', (select coalesce(jsonb_agg(jsonb_build_object('name', t->>'name', 'is_error', coalesce((t->>'is_error')::boolean, false))), '[]'::jsonb)
+                       from jsonb_array_elements(case when jsonb_typeof(d.tools_used) = 'array' then d.tools_used else '[]'::jsonb end) t),
+      'checks', d.grounding_check, 'offered_slots', d.proposed_slot, 'needs_review', d.needs_review,
+      'review_reason', d.review_reason, 'model', d.model, 'created_at', d.created_at));
+  end if;
+  result := result || jsonb_build_object('timeline', (
+    select coalesce(jsonb_agg(jsonb_build_object('step', a.step, 'event', a.event, 'at', a.created_at, 'model', a.model,
+                                                  'input_tokens', a.input_tokens, 'output_tokens', a.output_tokens,
+                                                  'cost_usd', a.cost_usd, 'duration_ms', a.duration_ms) order by a.id), '[]'::jsonb)
+      from audit_log a where a.enquiry_id = e.id));
+  result := result || jsonb_build_object('decision', (
+    select jsonb_build_object('decision', ap.decision, 'final_subject', ap.final_subject, 'final_text', ap.final_text,
+                              'send_mode', ap.send_mode, 'reason', ap.reason, 'decided_at', ap.decided_at,
+                              'outcome', (select jsonb_build_object(
+                                            'status', a.detail->'outcome'->>'status',
+                                            'holds', coalesce((a.detail->'outcome'->>'holds')::int, 0),
+                                            'customer_created', coalesce((a.detail->'outcome'->>'customer_created')::boolean, false),
+                                            'job_created', coalesce((a.detail->'outcome'->>'job_created')::boolean, false))
+                                            from audit_log a where a.enquiry_id = e.id and a.step = 'approval' and a.event = 'outcome'
+                                           order by a.id desc limit 1))
+      from approvals ap where ap.enquiry_id = e.id order by ap.decided_at desc limit 1));
+  return result;
+end $$;
+
 -- ---------------------------------------------------------------------------
 -- updated_at triggers
 -- ---------------------------------------------------------------------------

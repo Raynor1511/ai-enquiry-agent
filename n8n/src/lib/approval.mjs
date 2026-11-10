@@ -383,18 +383,31 @@ export function sourceLabel(source) {
 /** How long a tentative hold is kept before housekeeping releases it (unless someone confirms it). */
 export const HOLD_DAYS = 3;
 
+/**
+ * What a hold is called on the calendar. The demo page shows the bookings calendar publicly, so a
+ * title never includes a name or anything the sender typed: only the catalogue service (a fixed list)
+ * or the category, and the postcode district if it looks like one. Example: "boiler service · BS31".
+ */
+export function holdTitle(classification) {
+  const c = classification ?? {};
+  const id = (Array.isArray(c.service_ids) ? c.service_ids : []).find((x) => /^svc_[a-z0-9_]+$/.test(String(x)));
+  const what = id ? id.slice(4).replace(/_/g, " ") : (CATEGORY_LABEL[c.category] ?? "enquiry").toLowerCase();
+  const outward = String(c.postcode ?? "").toUpperCase().trim().split(/\s+/)[0];
+  const district = /^[A-Z]{1,2}[0-9][A-Z0-9]?$/.test(outward) ? outward : "area unknown";
+  return `${what} · ${district}`;
+}
+
 /** Google Calendar event bodies for tentative holds on the slots the reply offered. */
 export function holdEvents(slots, row, timezone = "Europe/London", nowMs = Date.now()) {
   const expires = new Date(nowMs + HOLD_DAYS * 24 * 3600 * 1000);
   const until = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(expires);
   if (!Array.isArray(slots)) return [];
-  const c = row.classification ?? {};
-  const district = String(c.postcode ?? "").toUpperCase().split(" ")[0] || "area unknown";
+  const title = holdTitle(row.classification);
   return slots
     .filter((s) => s?.start && s?.end && !Number.isNaN(Date.parse(s.start)) && !Number.isNaN(Date.parse(s.end)))
     .slice(0, 3)
     .map((s) => ({
-      summary: `HOLD (tentative): ${c.service_wanted ?? CATEGORY_LABEL[c.category] ?? "enquiry"} · ${row.source === "demo" ? "demo visitor" : row.sender_name ?? "customer"} (${district})`.slice(0, 200),
+      summary: `HOLD (tentative): ${title}`,
       description: `Offered to the customer in an approved reply, not yet confirmed. Enquiry ${row.message_id}.\nReleased automatically on ${until} unless confirmed. To keep it, take "HOLD" out of the title.`,
       start: { dateTime: s.start, timeZone: timezone },
       end: { dateTime: s.end, timeZone: timezone },

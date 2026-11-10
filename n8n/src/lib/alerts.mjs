@@ -29,6 +29,10 @@ export const FAILURES = {
     title: "Calendar holds not created",
     action: "The reply was sent, but some offered slots are not held in the calendar. Add them by hand.",
   },
+  demo_email_failed: {
+    title: "Live demo: confirmation email not sent",
+    action: "A visitor on the demo page didn't get their confirm link, so their enquiry can't start. Check the Gmail credential in n8n.",
+  },
 };
 
 /** Readable text for whatever an n8n node put in its error field (string, Error-like object, or nothing). */

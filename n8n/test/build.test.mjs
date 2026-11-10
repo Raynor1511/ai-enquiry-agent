@@ -142,3 +142,39 @@ test("Slack and the demo page share one decision path; the reject result comes l
   assert.deepEqual(new Set(after), new Set(["Slack: mark rejected", "Rejection result"]));
   assert.ok(byName(decide, "Slack: mark rejected").position[1] < byName(decide, "Rejection result").position[1]);
 });
+
+test("the demo workflow: private header-auth webhooks, the shared decision path, and answers for every case", async () => {
+  const { PATHS, CRED } = await import("../build.mjs");
+  const demo = all.find((w) => w.name === WF.demo);
+  const hooks = demo.nodes.filter((n) => n.type === "n8n-nodes-base.webhook");
+  assert.deepEqual(hooks.map((h) => h.parameters.path).sort(), [PATHS.demoConfirm, PATHS.demoDecide, PATHS.demoStart].sort());
+  for (const h of hooks) {
+    assert.equal(h.parameters.authentication, "headerAuth", h.name);
+    assert.equal(h.credentials.httpHeaderAuth.name, CRED.demo, h.name);
+    assert.equal(h.parameters.responseMode, "responseNode", h.name);
+  }
+  const call = byName(demo, "Decide (demo)");
+  assert.equal(call.parameters.workflowId.value, `__WORKFLOW__${WF.decide}`);
+  assert.equal(call.alwaysOutputData, true, "answers even when the draft was already decided");
+  const order = (n) => WORKFLOWS.findIndex((w) => w.workflow.name === n);
+  for (const sub of [WF.classify, WF.draft, WF.approval, WF.decide]) assert.ok(order(sub) < order(WF.demo), `${sub} published first`);
+
+  // Code nodes, with real upstream shapes.
+  const session = { token: "t", token_hash: "h", email: "dana@visitor-mail.org", name: "Dana Visitor", payload: {} };
+  let out = await runNode(WF.demo, "Recorded?", { nodes: { "Check start": { session } }, input: [{ session_id: null, starts_24h: 3, by_email_24h: 3 }] });
+  assert.deepEqual(out[0].json, { ok: false, error: "email_limit" });
+  out = await runNode(WF.demo, "Recorded?", { nodes: { "Check start": { session } }, input: [{ session_id: null, starts_24h: 60, by_email_24h: 0 }] });
+  assert.equal(out[0].json.error, "daily_limit");
+  out = await runNode(WF.demo, "Recorded?", { nodes: { "Check start": { session } }, input: [{ session_id: "s1", starts_24h: 0, by_email_24h: 0 }] });
+  assert.equal(out[0].json.reserved, false);
+  assert.equal(out[0].json.link, "https://__ENV__PUBLIC_HOST/demo/confirm?t=t");
+  out = await runNode(WF.demo, "Decision outcome", { input: [{}] });
+  assert.deepEqual(out[0].json, { ok: false, status: "already decided" });
+  out = await runNode(WF.demo, "Decision outcome", { input: [{ decision: "approved", status: "sent", final_body: "x", draft_id: "d" }] });
+  assert.deepEqual(out[0].json, { ok: true, decision: "approved", status: "sent" }, "no ids or text passed back");
+  out = await runNode(WF.demo, "Email sent?", { input: [{ error: { message: "invalid_grant" } }] });
+  assert.equal(out[0].json.ok, false);
+  const alert = await runNode(WF.demo, "Failure alert?", { nodes: { "Check start": { session } }, input: [out[0].json] });
+  assert.equal(alert[0].json.alert, "demo_email_failed");
+  assert.deepEqual(await runNode(WF.demo, "Failure alert?", { nodes: { "Check start": { session } }, input: [{ ok: true }] }), []);
+});

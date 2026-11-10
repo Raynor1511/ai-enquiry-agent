@@ -7,6 +7,7 @@
 //   5. connects as mcp_readonly and checks it can read but not write
 //   6. the same for n8n's least-privilege role n8n_writer (N8N_DB_URL): replays every query the
 //      workflows run (rolled back) and checks that deleting, rewriting and DDL are refused
+//   7. the same for the demo page's role demo_web (DEMO_DB_URL): it may only run demo_view()
 // Options: --keep-password  reuse the passwords already in DATABASE_URL / N8N_DB_URL instead of rotating them
 // After a rotation: docker compose up -d mcp-server, and
 //                   node scripts/n8n-credentials.mjs --update "Supabase Postgres (n8n writes)"
@@ -112,6 +113,17 @@ if (keep && env.N8N_DB_URL) {
   writerRotated = true;
   ok("login enabled with a new random password");
 }
+
+step("Setting up the demo page's role demo_web");
+let demoPassword;
+if (keep && env.DEMO_DB_URL) {
+  demoPassword = decodeURIComponent(new URL(env.DEMO_DB_URL).password);
+  ok("keeping the existing password");
+} else {
+  demoPassword = randomBytes(24).toString("hex");
+  await db.query(`alter role demo_web with login password ${db.escapeLiteral(demoPassword)}`);
+  ok("login enabled with a new random password");
+}
 await db.end();
 
 const ro = new URL(admin.href);
@@ -124,8 +136,12 @@ const w = new URL(ro.href);
 w.username = isSupabasePooler ? `n8n_writer.${projectRef}` : "n8n_writer";
 w.password = writerPassword;
 const writerUrl = w.href;
-updateEnv({ DATABASE_URL: readOnlyUrl, DATABASE_SSL: ssl === false ? "disable" : "no-verify", N8N_DB_URL: writerUrl });
-ok("wrote DATABASE_URL, DATABASE_SSL and N8N_DB_URL to .env");
+const dw = new URL(ro.href);
+dw.username = isSupabasePooler ? `demo_web.${projectRef}` : "demo_web";
+dw.password = demoPassword;
+const demoUrl = dw.href;
+updateEnv({ DATABASE_URL: readOnlyUrl, DATABASE_SSL: ssl === false ? "disable" : "no-verify", N8N_DB_URL: writerUrl, DEMO_DB_URL: demoUrl });
+ok("wrote DATABASE_URL, DATABASE_SSL, N8N_DB_URL and DEMO_DB_URL to .env");
 
 step("Checking the read-only connection");
 let roDb;
@@ -174,6 +190,40 @@ const wrongly = await checkForbidden(wDb);
 await wDb.end();
 if (wrongly.length) die(`n8n_writer was able to: ${wrongly.join(", ")}`);
 ok("cannot delete, truncate, rewrite messages/drafts/approvals, read audit details or create tables (permission denied)");
+
+step("Checking the demo_web connection");
+let dDb;
+try {
+  dDb = await connect(demoUrl);
+} catch (err) {
+  die(`demo_web could not connect: ${err.message}`);
+}
+ok(`connected as ${(await dDb.query("select current_user")).rows[0].current_user}`);
+const unknown = (await dDb.query("select demo_view($1) as v", [randomBytes(32).toString("hex")])).rows[0].v;
+if (unknown !== null) die("demo_view returned data for an unknown token");
+ok("can run demo_view (an unknown link shows nothing)");
+for (const [label, sql] of [
+  ["read demo sessions", "select 1 from demo_sessions limit 1"],
+  ["read enquiries", "select 1 from enquiries limit 1"],
+  ["read customers", "select 1 from customers limit 1"],
+  ["read the audit log", "select 1 from audit_log limit 1"],
+  ["add a demo session", "insert into demo_sessions (token_hash, email, payload) values ('x', 'x@example.com', '{}')"],
+  ["purge demo data", "select * from purge_demo_data(7)"],
+  ["create a table", "create table demo_web_probe (id int)"],
+]) {
+  try {
+    await dDb.query(sql);
+    await dDb.end();
+    die(`demo_web was able to ${label}`);
+  } catch (err) {
+    if (!/permission denied/.test(err.message)) {
+      await dDb.end();
+      die(`unexpected error on "${label}": ${err.message}`);
+    }
+  }
+}
+await dDb.end();
+ok("cannot read or write any table, purge, or create anything (permission denied)");
 
 console.log("\nDone. To make the MCP server read from the database, set DATA_SOURCE=postgres in .env.");
 if (!keep) console.log("Passwords were rotated: restart the MCP server with  docker compose up -d mcp-server");

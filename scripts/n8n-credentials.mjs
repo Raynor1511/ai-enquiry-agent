@@ -102,6 +102,13 @@ const wanted = [
     data: () => ({ name: "X-Harbourline-Test-Key", value: env.TEST_WEBHOOK_KEY }),
   },
   {
+    name: "Harbourline demo service",
+    type: "httpHeaderAuth",
+    needs: ["DEMO_N8N_KEY"],
+    // Protects the demo page's webhooks (n8n/build.mjs -> Demo); only the demo service sends it.
+    data: () => ({ name: "X-Harbourline-Demo-Key", value: env.DEMO_N8N_KEY }),
+  },
+  {
     name: "Harbourline MCP server",
     type: "httpBearerAuth",
     needs: ["MCP_AUTH_TOKEN"],

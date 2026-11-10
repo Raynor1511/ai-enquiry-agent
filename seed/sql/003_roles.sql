@@ -110,6 +110,36 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
+-- The demo page's service (demo/): it shows a visitor their own enquiry and nothing else.
+--
+-- It can't read or write any table. Its only privilege is running demo_view(token hash), which
+-- returns one demo session's own data to whoever holds that session's link. Starting, confirming and
+-- deciding go through n8n, never this role.
+-- db-setup.mjs gives it a random password and writes the connection to DEMO_DB_URL in .env.
+-- On Supabase, connect through the pooler with the user name  demo_web.<project-ref>
+-- ---------------------------------------------------------------------------
+
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'demo_web') then
+    create role demo_web nologin;
+  end if;
+end $$;
+alter role demo_web set statement_timeout = '5s';
+alter role demo_web set idle_in_transaction_session_timeout = '10s';
+grant usage on schema public to demo_web;
+revoke create on schema public from demo_web;
+revoke all on all tables in schema public from demo_web;
+revoke all on function demo_view(text) from public;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'revoke all on function demo_view(text) from anon, authenticated';
+  end if;
+end $$;
+grant execute on function demo_view(text) to demo_web;
+
+-- ---------------------------------------------------------------------------
 -- Supabase's public API roles. Supabase grants them every new table in the public schema by default;
 -- row level security already gives them no rows, and this removes the grants themselves from this
 -- project's tables as a second layer. (Only these tables: other apps' schemas and roles are untouched.)
