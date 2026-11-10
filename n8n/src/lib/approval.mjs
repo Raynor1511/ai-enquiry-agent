@@ -97,7 +97,7 @@ export function verifySlackSignature({ rawBody, timestamp, signature, secret, no
 // ---------------------------------------------------------------------------------------------
 // Interactions
 
-export const ACTIONS = { approve: "harbourline_approve", edit: "harbourline_edit", reject: "harbourline_reject" };
+export const ACTIONS = { approve: "harbourline_approve", edit: "harbourline_edit", reject: "harbourline_reject", rescue: "harbourline_rescue" };
 export const VIEWS = { edit: "harbourline_edit_submit", reject: "harbourline_reject_submit" };
 
 /**
@@ -127,6 +127,12 @@ export function routeInteraction(p) {
       value = JSON.parse(action?.value ?? "{}");
     } catch {}
     const base = { user, draft_id: value.d ?? null, channel: p.container?.channel_id ?? p.channel?.id ?? null, ts: p.container?.message_ts ?? p.message?.ts ?? null, trigger_id: p.trigger_id ?? null };
+    // "Process" on a spam-folder alert (housekeeping): carries a Gmail message id, not a draft.
+    if (action?.action_id === ACTIONS.rescue) {
+      const gmailId = String(value.g ?? "");
+      if (!/^[0-9a-f]{8,24}$/.test(gmailId)) return { kind: "ignore", reason: "bad gmail id" };
+      return { kind: "rescue", user, gmail_id: gmailId, channel: base.channel, ts: base.ts };
+    }
     if (!base.draft_id) return { kind: "ignore", reason: "no draft id" };
     if (action.action_id === ACTIONS.approve) return { kind: "approve", ...base };
     if (action.action_id === ACTIONS.edit) return { kind: "edit_open", ...base, subject: value.s ?? null, body: value.b ?? null };
@@ -299,7 +305,7 @@ export function outcomeCard(channel, ts, card, outcome) {
     ? `${icon} *Rejected* by ${slackEscape(outcome.by, 80)}${outcome.reason ? `: ${slackEscape(outcome.reason, 300)}` : ""}`
     : outcome.status === "failed"
       ? `${icon} *Approved by ${slackEscape(outcome.by, 80)}, but sending failed:* ${slackEscape(outcome.error ?? "unknown error", 300)}. Please reply manually.`
-      : `${icon} *${outcome.edited ? "Edited and sent" : "Sent"}* by ${slackEscape(outcome.by, 80)}${outcome.status === "simulated" ? " (simulated: test address, nothing emailed)" : ""}${outcome.holds ? ` · ${outcome.holds} tentative hold(s) added` : ""}${outcome.customer_created ? " · new customer record" : ""}${outcome.job_created ? " · job logged" : ""}`;
+      : `${icon} *${outcome.edited ? "Edited and sent" : "Sent"}* by ${slackEscape(outcome.by, 80)}${outcome.status === "simulated" ? " (simulated: test address, nothing emailed)" : ""}${outcome.holds ? ` · ${outcome.holds} tentative hold(s) added for ${HOLD_DAYS} days` : ""}${outcome.customer_created ? " · new customer record" : ""}${outcome.job_created ? " · job logged" : ""}`;
   return {
     channel,
     ts,
@@ -369,8 +375,13 @@ export function splitName(name) {
 
 export const JOB_CATEGORIES = ["new_job_request", "quote_request", "emergency"];
 
+/** How long a tentative hold is kept before housekeeping releases it (unless someone confirms it). */
+export const HOLD_DAYS = 3;
+
 /** Google Calendar event bodies for tentative holds on the slots the reply offered. */
-export function holdEvents(slots, row, timezone = "Europe/London") {
+export function holdEvents(slots, row, timezone = "Europe/London", nowMs = Date.now()) {
+  const expires = new Date(nowMs + HOLD_DAYS * 24 * 3600 * 1000);
+  const until = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(expires);
   if (!Array.isArray(slots)) return [];
   const c = row.classification ?? {};
   const district = String(c.postcode ?? "").toUpperCase().split(" ")[0] || "area unknown";
@@ -379,12 +390,12 @@ export function holdEvents(slots, row, timezone = "Europe/London") {
     .slice(0, 3)
     .map((s) => ({
       summary: `HOLD (tentative): ${c.service_wanted ?? CATEGORY_LABEL[c.category] ?? "enquiry"} · ${row.sender_name ?? "customer"} (${district})`.slice(0, 200),
-      description: `Offered to the customer in an approved reply, not yet confirmed. Enquiry ${row.message_id}. Remove if they choose another time.`,
+      description: `Offered to the customer in an approved reply, not yet confirmed. Enquiry ${row.message_id}.\nReleased automatically on ${until} unless confirmed. To keep it, take "HOLD" out of the title.`,
       start: { dateTime: s.start, timeZone: timezone },
       end: { dateTime: s.end, timeZone: timezone },
       status: "tentative",
       transparency: "opaque",
       colorId: "5",
-      extendedProperties: { private: { harbourlineHold: String(row.enquiry_id) } },
+      extendedProperties: { private: { harbourlineHold: String(row.enquiry_id), harbourlineHoldExpires: expires.toISOString() } },
     }));
 }

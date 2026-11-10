@@ -65,9 +65,10 @@ grant select on services to n8n_writer;
 grant select, insert on enquiries, drafts, approvals, customers, jobs to n8n_writer;
 grant update (status, category, urgency, is_suspicious, classification, customer_id) on enquiries to n8n_writer;
 grant update (slack_channel, slack_ts) on drafts to n8n_writer;
--- The audit log is append-only for n8n; it may read back only the ids its inserts return.
+-- The audit log is append-only for n8n. It may read the ids its inserts return and what happened
+-- when (housekeeping reminders look for the last card and reminder), but never the details.
 grant insert on audit_log to n8n_writer;
-grant select (id, enquiry_id) on audit_log to n8n_writer;
+grant select (id, enquiry_id, step, event, created_at) on audit_log to n8n_writer;
 grant execute on function normalise_uk_phone(text), name_key(text) to n8n_writer;
 
 -- Row level security: matching policies for this role only (anon/authenticated still get nothing).

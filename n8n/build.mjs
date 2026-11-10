@@ -24,6 +24,7 @@ export const WF = {
   intake: "Harbourline · Intake (form + Gmail)",
   testIntake: "Harbourline · Test intake (eval)",
   alerts: "Harbourline · Alerts",
+  housekeeping: "Harbourline · Housekeeping",
 };
 export const CRED = {
   postgres: "Supabase Postgres (n8n writes)",
@@ -71,6 +72,7 @@ const DRAFT_SYSTEM_PROMPT = read("n8n/src/prompts/draft-system.md")
 
 // Each library is a list of parts; a node that uses several libraries gets each part once.
 const ALERTS_CHANNEL_CONST = `const ALERTS_CHANNEL = "__ENV__SLACK_ALERTS_CHANNEL_ID";`;
+const CALENDAR_ID_CONST = `const CALENDAR_ID = "__ENV__GOOGLE_CALENDAR_ID";`;
 const LIB = {
   drafting: [
     inline("n8n/src/lib/drafting.mjs"),
@@ -83,9 +85,10 @@ const LIB = {
     inline("n8n/src/lib/slack.mjs"),
     inline("n8n/src/lib/approval.mjs"),
     `const APPROVAL_CHANNEL = "__ENV__SLACK_APPROVAL_CHANNEL_ID";`,
-    `const CALENDAR_ID = "__ENV__GOOGLE_CALENDAR_ID";`,
+    CALENDAR_ID_CONST,
   ],
   alerts: [inline("n8n/src/lib/slack.mjs"), inline("n8n/src/lib/alerts.mjs"), ALERTS_CHANNEL_CONST],
+  housekeeping: [inline("n8n/src/lib/slack.mjs"), inline("n8n/src/lib/housekeeping.mjs"), ALERTS_CHANNEL_CONST, CALENDAR_ID_CONST],
   normalise: [inline("n8n/src/lib/normalise.mjs")],
   classification: [
     inline("n8n/src/lib/classification.mjs"),
@@ -199,9 +202,10 @@ const mcpNode = (name, position, body) => ({
   onError: "continueRegularOutput",
 });
 
+/** Postgres query node. params: an expression for the $1.. values, or null for a query without any. */
 const pgNode = (name, position, query, params = "={{ $json.params }}") => ({
   name, type: "n8n-nodes-base.postgres", typeVersion: 2.6, position,
-  parameters: { operation: "executeQuery", query, options: { queryReplacement: params } },
+  parameters: { operation: "executeQuery", query, options: params === null ? {} : { queryReplacement: params } },
   credentials: cred("postgres", CRED.postgres),
   retryOnFail: true, maxTries: 3, waitBetweenTries: 2000,
 });
@@ -889,6 +893,35 @@ const row = { ...$json, body: $json.draft_body };
 const outcome = { status: "rejected", by: r.user.name, reason: r.reason };
 return { json: { update: row.slack_channel && row.slack_ts ? outcomeCard(row.slack_channel, row.slack_ts, approvalCard(row.slack_channel, row), outcome) : null } };`)),
     slackApiNode("Slack: mark rejected", [2420, 800], "chat.update", "={{ JSON.stringify($json.update) }}"),
+
+    // --- "Process" on a Spam-folder alert (Housekeeping): run the email through the normal pipeline.
+    // Gmail's trigger never sees mail moved out of Spam (it only looks for mail newer than its last
+    // check), so the email is fetched and processed here, then moved to the inbox and marked read.
+    ifTrue("Process spam email?", [1760, 1000], `$json.route.kind === "rescue"`),
+    {
+      name: "Gmail: get the spam email", type: "n8n-nodes-base.gmail", typeVersion: 2.1, position: [1980, 1000],
+      parameters: { resource: "message", operation: "get", messageId: "={{ $json.route.gmail_id }}", simple: false, options: {} },
+      credentials: cred("gmailOAuth2", CRED.gmail),
+    },
+    codeNode("Normalise rescued email", [2200, 1000], code("normalise", `return { json: fromGmail($json) };`)),
+    callClassify("Classify (rescued)", [2420, 1000]),
+    callDraft("Draft reply (rescued)", [2640, 1000]),
+    callApproval("Post for approval (rescued)", [2860, 1000]),
+    {
+      name: "Gmail: move to inbox", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3080, 1000],
+      parameters: {
+        method: "POST", url: `=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $("Acknowledge Slack").first().json.route.gmail_id }}/modify`,
+        authentication: "predefinedCredentialType", nodeCredentialType: "gmailOAuth2",
+        sendBody: true, specifyBody: "json", jsonBody: JSON.stringify({ addLabelIds: ["INBOX"], removeLabelIds: ["SPAM", "UNREAD"] }), options: { timeout: 15000 },
+      },
+      credentials: cred("gmailOAuth2", CRED.gmail),
+      retryOnFail: true, maxTries: 2, waitBetweenTries: 1000, onError: "continueRegularOutput",
+    },
+    codeNode("Rescue result", [3300, 1000], code("housekeeping", `
+const r = $("Acknowledge Slack").first().json.route;
+const moved = !$json.error && Array.isArray($json.labelIds);
+return [{ json: { message: rescueReply(r.channel, r.ts, r.user, $("Classify (rescued)").first().json, $("Post for approval (rescued)").first().json, moved) } }];`), "runOnceForAllItems"),
+    slackApiNode("Slack: rescue result", [3520, 1000], "chat.postMessage", "={{ JSON.stringify($json.message) }}"),
   ],
   [
     ["Slack interaction", "Verify signature + route"],
@@ -932,6 +965,15 @@ return { json: { update: row.slack_channel && row.slack_ts ? outcomeCard(row.sla
     ["Reject decision", "Record rejection"],
     ["Record rejection", "Rejected card"],
     ["Rejected card", "Slack: mark rejected"],
+    ["Reject submitted?", "Process spam email?", 1],
+    ["Process spam email?", "Gmail: get the spam email", 0],
+    ["Gmail: get the spam email", "Normalise rescued email"],
+    ["Normalise rescued email", "Classify (rescued)"],
+    ["Classify (rescued)", "Draft reply (rescued)"],
+    ["Draft reply (rescued)", "Post for approval (rescued)"],
+    ["Post for approval (rescued)", "Gmail: move to inbox"],
+    ["Gmail: move to inbox", "Rescue result"],
+    ["Rescue result", "Slack: rescue result"],
   ],
 );
 
@@ -1066,11 +1108,153 @@ return $input.all();`), "runOnceForAllItems"),
 );
 
 // ---------------------------------------------------------------------------------------------
+// 8. Housekeeping (scheduled): release stale holds, check the Spam folder, remind about waiting cards
+
+const RELEASE_SQL = `-- Log released holds against the enquiry (if it still exists) and find its approval card.
+with a as (
+  insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail)
+  values ((select id from enquiries where id = nullif($1, '')::uuid), $2, 'housekeeping', 'holds_released', $3::jsonb)
+  returning id, enquiry_id
+)
+select a.enquiry_id, d.slack_channel, d.slack_ts, $3::jsonb as detail
+  from a
+  left join lateral (
+    select slack_channel, slack_ts from drafts
+     where enquiry_id = a.enquiry_id and slack_ts is not null
+     order by version desc limit 1
+  ) d on true;`;
+
+const WAITING_SQL = `-- Live approval cards still waiting, with when the card was posted and the last reminder.
+select e.id as enquiry_id, e.urgency, e.sender_name, e.classification->>'summary' as summary,
+       d.slack_channel, d.slack_ts,
+       to_char(card.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as card_posted_at,
+       to_char(rem.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as last_reminder_at
+  from enquiries e
+  join lateral (
+    select slack_channel, slack_ts from drafts
+     where enquiry_id = e.id and slack_ts is not null order by version desc limit 1
+  ) d on true
+  left join lateral (
+    select created_at from audit_log
+     where enquiry_id = e.id and step = 'approval' and event = 'card_posted' order by id desc limit 1
+  ) card on true
+  left join lateral (
+    select created_at from audit_log
+     where enquiry_id = e.id and step = 'housekeeping' and event = 'approval_reminder' order by id desc limit 1
+  ) rem on true
+ where e.status = 'awaiting_approval' and not e.is_test
+ order by e.received_at;`;
+
+const REMINDER_SQL = `insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail)
+values ($1::uuid, $2, 'housekeeping', $3, $4::jsonb) returning id;`;
+
+const cron = (name, position, expression) => ({
+  name, type: "n8n-nodes-base.scheduleTrigger", typeVersion: 1.2, position,
+  parameters: { rule: { interval: [{ field: "cronExpression", expression }] } },
+});
+const calendarApi = (name, position, method, extra = {}) => ({
+  name, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position,
+  parameters: { method, url: "={{ $json.url }}", authentication: "predefinedCredentialType", nodeCredentialType: "googleCalendarOAuth2Api", options: { timeout: 20000 } },
+  credentials: cred("googleCalendarOAuth2Api", CRED.calendar),
+  retryOnFail: true, maxTries: 2, waitBetweenTries: 2000, ...extra,
+});
+const EVENTS_URL = "`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CALENDAR_ID)}/events`";
+
+const housekeeping = workflow(
+  WF.housekeeping,
+  [
+    // --- 1. Release tentative holds nobody confirmed (times are UK time: the workflow's timezone)
+    cron("Every day at 07:00", [0, 0], "0 7 * * *"),
+    codeNode("Hold search", [220, 0], code("housekeeping", `
+const now = Date.now();
+const day = 24 * 3600 * 1000;
+const q = ["singleEvents=true", "showDeleted=false", "maxResults=2500",
+  "timeMin=" + encodeURIComponent(new Date(now - 60 * day).toISOString()), "timeMax=" + encodeURIComponent(new Date(now + 180 * day).toISOString())];
+return [{ json: { url: ${EVENTS_URL} + "?" + q.join("&") } }];`), "runOnceForAllItems"),
+    calendarApi("Calendar: list events", [440, 0], "GET"),
+    codeNode("Expired holds", [660, 0], code("housekeeping", `
+const holds = expiredHolds($input.first().json.items ?? [], Date.now());
+return holds.map((h) => ({ json: { ...h, url: ${EVENTS_URL} + "/" + encodeURIComponent(h.event_id) + "?sendUpdates=none" } }));`), "runOnceForAllItems"),
+    calendarApi("Calendar: release hold", [880, 0], "DELETE", { onError: "continueRegularOutput" }),
+    codeNode("Group released", [1100, 0], code("housekeeping", `
+const holds = $("Expired holds").all().map((i) => i.json);
+const results = $input.all().map((i) => i.json);
+const released = holds.filter((h, k) => !results[k]?.error);
+const failed = holds.length - released.length;
+return groupByEnquiry(released).map((g) => ({ json: { params: [g.enquiry_id ?? "", String($execution.id),
+  JSON.stringify({ holds: g.holds.map((h) => ({ event_id: h.event_id, start: h.start, end: h.end })), failed_in_run: failed })] } }));`), "runOnceForAllItems"),
+    pgNode("Log release + find card", [1320, 0], RELEASE_SQL),
+    ifTrue("Card to note it on?", [1540, 0], "Boolean($json.slack_ts)"),
+    codeNode("Release note", [1760, 0], code("housekeeping", `return { json: { message: holdsReleasedReply($json.slack_channel, $json.slack_ts, $json.detail.holds) } };`)),
+    slackApiNode("Slack: note in thread", [1980, 0], "chat.postMessage", "={{ JSON.stringify($json.message) }}"),
+
+    // --- 2. Real enquiries that Gmail put in Spam: listed in #alerts with a Process button
+    cron("Every day at 08:00 and 14:00", [0, 300], "0 8,14 * * *"),
+    codeNode("Spam window", [220, 300], code("housekeeping", `
+const memory = $getWorkflowStaticData("global");
+return [{ json: { after: sweepStart(memory.last_spam_sweep, Date.now()), started: Date.now() } }];`), "runOnceForAllItems"),
+    {
+      name: "Gmail: new mail in Spam", type: "n8n-nodes-base.gmail", typeVersion: 2.1, position: [440, 300],
+      parameters: {
+        resource: "message", operation: "getAll", returnAll: false, limit: 50, simple: false,
+        filters: { includeSpamTrash: true, q: "in:spam -from:me", readStatus: "unread", receivedAfter: "={{ $json.after }}" }, options: {},
+      },
+      credentials: cred("gmailOAuth2", CRED.gmail),
+      retryOnFail: true, maxTries: 2, waitBetweenTries: 2000,
+    },
+    codeNode("Spam candidates", [660, 300], code(["normalise", "housekeeping"], `
+// The next sweep starts where this one did (mail already listed isn't listed again).
+const memory = $getWorkflowStaticData("global");
+memory.last_spam_sweep = $("Spam window").first().json.started;
+const emails = $input.all().map((i) => fromGmail(i.json));
+const found = spamCandidates(emails);
+return found.length ? [{ json: { message: spamAlert(ALERTS_CHANNEL, found, emails.length) } }] : [];`), "runOnceForAllItems"),
+    slackApiNode("Slack: spam alert", [880, 300], "chat.postMessage", "={{ JSON.stringify($json.message) }}"),
+
+    // --- 3. Remind people about approval cards that have waited too long (business hours)
+    cron("Hourly 08:00-18:00, Mon-Sat", [0, 600], "0 8-18 * * 1-6"),
+    pgNode("Cards waiting for approval", [220, 600], WAITING_SQL, null),
+    codeNode("Due reminders", [440, 600], code("housekeeping", `
+return dueReminders($input.all().map((i) => i.json), Date.now()).map((r) => ({ json: { r, message: reminderMessage(r) } }));`), "runOnceForAllItems"),
+    slackApiNode("Slack: reminder", [660, 600], "chat.postMessage", "={{ JSON.stringify($json.message) }}"),
+    codeNode("Reminder sent?", [880, 600], code(null, `
+const due = $("Due reminders").all().map((i) => i.json.r);
+return $input.all().map((i, k) => {
+  const ok = i.json.ok === true;
+  const detail = { urgency: due[k].urgency, waited_min: Math.round(due[k].waited_ms / 60000), slack_error: ok ? null : String(i.json.error?.message ?? i.json.error ?? "no response") };
+  return { json: { params: [due[k].enquiry_id, String($execution.id), ok ? "approval_reminder" : "approval_reminder_failed", JSON.stringify(detail)] } };
+});`), "runOnceForAllItems"),
+    pgNode("Log reminder", [1100, 600], REMINDER_SQL),
+  ],
+  [
+    ["Every day at 07:00", "Hold search"],
+    ["Hold search", "Calendar: list events"],
+    ["Calendar: list events", "Expired holds"],
+    ["Expired holds", "Calendar: release hold"],
+    ["Calendar: release hold", "Group released"],
+    ["Group released", "Log release + find card"],
+    ["Log release + find card", "Card to note it on?"],
+    ["Card to note it on?", "Release note", 0],
+    ["Release note", "Slack: note in thread"],
+    ["Every day at 08:00 and 14:00", "Spam window"],
+    ["Spam window", "Gmail: new mail in Spam"],
+    ["Gmail: new mail in Spam", "Spam candidates"],
+    ["Spam candidates", "Slack: spam alert"],
+    ["Hourly 08:00-18:00, Mon-Sat", "Cards waiting for approval"],
+    ["Cards waiting for approval", "Due reminders"],
+    ["Due reminders", "Slack: reminder"],
+    ["Slack: reminder", "Reminder sent?"],
+    ["Reminder sent?", "Log reminder"],
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
 
 /** Every query the workflows run, so scripts/db-setup.mjs can prove the n8n_writer role allows each one. */
 export const SQL = {
   INSERT_SQL, SAVE_SQL, LOAD_SQL, SAVE_DRAFT_SQL, LOAD_CARD_SQL, SAVE_CARD_SQL,
   CLAIM_SQL, RECORD_SQL, REJECT_SQL, OUTCOME_SQL, LOAD_DRAFT_TEXT_SQL,
+  RELEASE_SQL, WAITING_SQL, REMINDER_SQL,
 };
 
 export const WORKFLOWS = [
@@ -1083,6 +1267,7 @@ export const WORKFLOWS = [
   { file: "interactions.json", workflow: interactions, activate: true },
   { file: "intake.json", workflow: intake, activate: true },
   { file: "test-intake.json", workflow: testIntake, activate: true },
+  { file: "housekeeping.json", workflow: housekeeping, activate: true },
 ];
 
 for (const { workflow: wf } of WORKFLOWS) checkReferences(wf);

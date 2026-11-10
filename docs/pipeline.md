@@ -185,3 +185,17 @@ Only two things are public: the web form and the webhooks (Slack's interactions)
 Over a limit, ngrok answers `429 Too Many Requests` with a `retry-after` header, and n8n never sees the request. ngrok counts per ingress server, so the totals are approximate. The evaluation webhook is no longer reachable through the tunnel at all; the evaluation runner calls it on localhost.
 
 Tested through the public address: the form page loads; the editor, login, REST API and evaluation webhook get 404; an unsigned Slack request gets 401 and a genuine signed one 200; and a burst of six form submissions to a form path that doesn't exist (so n8n starts nothing) got five 404s from n8n and then a 429 from ngrok.
+
+### Housekeeping
+
+A scheduled **Housekeeping** workflow (UK time) keeps the system tidy without anyone remembering to:
+
+| Job | When | What it does |
+| --- | --- | --- |
+| Release unconfirmed holds | Daily 07:00 | Each tentative hold records its expiry (3 days after the reply) and says in its description how to keep it. Holds past expiry that still look like holds (tagged, tentative, title starting "HOLD") are deleted, the enquiry's audit log records it, and a note goes in the approval card's thread. Renamed or confirmed holds and the demo bookings are never touched |
+| Rescue real enquiries from Spam | 08:00 and 14:00 | Unread mail that arrived in Gmail's Spam folder since the last check is matched against words the business cares about (boiler, leak, radiator, quote, ...). Matches are listed in **#alerts**, each with a **Process** button; ordinary spam is left alone. Process fetches the email and runs it through the normal pipeline (classify, draft, approval card), then moves it to the inbox and marks it read, and replies in the alert's thread with the result. This is needed because Gmail's trigger never sees mail moved out of Spam (it only looks for mail newer than its last check) |
+| Remind about waiting cards | Hourly 08:00-18:00, Mon-Sat | Approval cards still waiting get a reminder in their thread (also shown in the channel): after 30 minutes for emergencies (then hourly), 1 hour for high urgency (then every 4 hours), 4 hours for normal (then daily), a day for low. Each reminder is logged, so none is repeated early |
+
+The rescue only ever creates an approval card; nothing is emailed without a person approving it, and pressing Process twice does nothing new (message ids are unique). Reminders read only which event happened when from the audit log (`n8n_writer` can't read audit details).
+
+Tested: unit tests for every rule (expiry and the round trip from hold creation to release, word matching with word boundaries, reminder timing per urgency, Slack escaping). Live, with synthetic data and a temporary copy of the workflow whose schedules were swapped for webhooks: an expired hold was released while a renamed one, one not yet due and the real holds stayed; a card waiting 5 hours got one reminder and no second one an hour later; of two emails placed in Spam, the leaking-pipe one was listed and the casino one wasn't; pressing Process (a correctly signed Slack request) took it through classification and drafting to an approval card for $0.038, moved it to the inbox and replied in the thread. Everything synthetic was removed afterwards.

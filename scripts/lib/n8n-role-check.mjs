@@ -1,6 +1,6 @@
 // Proves the n8n_writer role can run every query the n8n workflows run, and nothing destructive.
 // The positive check replays the workflow queries in pipeline order (intake -> classify -> draft ->
-// card -> approve -> reject attempt) with the same string parameters n8n sends, inside a transaction
+// card -> housekeeping -> approve -> reject attempt) with the same string parameters n8n sends, inside a transaction
 // that is always rolled back, so it leaves no data behind.
 
 const EXEC = "role-check";
@@ -39,6 +39,11 @@ export async function checkWorkflowQueries(client, SQL) {
     if (!draftId) throw new Error("draft: save draft returned no id");
     await run("approval: load for card", SQL.LOAD_CARD_SQL, [enquiryId, draftId]);
     await run("approval: save card + status", SQL.SAVE_CARD_SQL, [draftId, "C0000000", "1.1", enquiryId, "true", EXEC, "{}", "true"]);
+    // Housekeeping: the reminder query (this enquiry is a test, so it isn't listed), a reminder and a hold release.
+    await run("housekeeping: cards waiting for approval", SQL.WAITING_SQL, [], false);
+    await run("housekeeping: log reminder", SQL.REMINDER_SQL, [enquiryId, EXEC, "approval_reminder", "{}"]);
+    const release = await run("housekeeping: log release + find card", SQL.RELEASE_SQL, [enquiryId, EXEC, '{"holds":[]}']);
+    if (release.slack_ts !== "1.1") throw new Error("housekeeping: log release + find card did not find the card");
     await run("interactions: load draft text (edit)", SQL.LOAD_DRAFT_TEXT_SQL, [draftId]);
     await run("interactions: claim draft", SQL.CLAIM_SQL, [draftId]);
     const service = (await client.query("select id from services order by id limit 1")).rows[0]?.id ?? "";
@@ -65,6 +70,7 @@ export const FORBIDDEN = [
   ["change an approval", "update approvals set final_text = final_text where false"],
   ["change customers", "update customers set notes = notes where false"],
   ["read audit details", "select detail from audit_log limit 0"],
+  ["change the audit log", "update audit_log set event = event where false"],
   ["read policies", "select 1 from policies limit 0"],
   ["truncate jobs", "begin; truncate jobs; rollback"],
   ["create a table", "begin; create table n8n_writer_probe (x int); rollback"],
