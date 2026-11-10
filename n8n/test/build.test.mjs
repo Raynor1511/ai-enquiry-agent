@@ -167,7 +167,7 @@ test("the demo workflow: private header-auth webhooks, the shared decision path,
   assert.equal(out[0].json.error, "daily_limit");
   out = await runNode(WF.demo, "Recorded?", { nodes: { "Check start": { session } }, input: [{ session_id: "s1", starts_24h: 0, by_email_24h: 0 }] });
   assert.equal(out[0].json.reserved, false);
-  assert.equal(out[0].json.link, "https://__ENV__PUBLIC_HOST/demo/confirm?t=t");
+  assert.equal(out[0].json.link, "https://__ENV__PUBLIC_HOST/demo/confirm#t");
   out = await runNode(WF.demo, "Decision outcome", { input: [{}] });
   assert.deepEqual(out[0].json, { ok: false, status: "already decided" });
   out = await runNode(WF.demo, "Decision outcome", { input: [{ decision: "approved", status: "sent", final_body: "x", draft_id: "d" }] });

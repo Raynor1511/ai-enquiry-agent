@@ -3,6 +3,7 @@
 # forwards to the gate, which applies the path allow-list and rate limits before anything reaches n8n.
 #
 #   Caddy (web network) -> gate:8080 -> n8n:5678 -> mcp-server:3333
+#                                    -> demo:8080 (/demo) -> n8n's Demo webhooks
 #
 # Only the gate joins the shared "web" network; n8n and the MCP server are on this project's own
 # network. Nothing publishes a public port: the n8n editor is bound to the server's 127.0.0.1 and is
@@ -74,6 +75,29 @@ services:
     mem_limit: 256m
     pids_limit: 128
 
+  # The live demo page at https://${PUBLIC_HOST}/demo (docs/demo.md). It calls n8n's Demo webhooks on
+  # this private network and reads one visitor's state through demo_view() as the demo_web role.
+  demo:
+    build:
+      context: .
+      dockerfile: demo/Dockerfile
+    image: harbourline-demo:server
+    container_name: harbourline-demo
+    restart: unless-stopped
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}
+      DEMO_DB_URL: ${DEMO_DB_URL:?DEMO_DB_URL is empty in .env (node scripts/db-setup.mjs writes it)}
+      DEMO_N8N_KEY: ${DEMO_N8N_KEY:?DEMO_N8N_KEY is empty in .env (node scripts/init-env.mjs generates it)}
+      N8N_INTERNAL_URL: http://n8n:5678
+      DEMO_CALENDAR_EMBED_URL: ${DEMO_CALENDAR_EMBED_URL:-}
+    networks: [internal]
+    depends_on: [n8n]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 64
+
   gate:
     image: haproxy:3.2.25-alpine
     container_name: harbourline-gate
@@ -81,7 +105,7 @@ services:
     volumes:
       - ./infra/gate:/usr/local/etc/haproxy:ro
     networks: [internal, web]
-    depends_on: [n8n]
+    depends_on: [n8n, demo]
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]

@@ -36,7 +36,8 @@ export function checkStart(body) {
 
 /** The confirmation email. The link opens a page with a button, so link scanners can't start the demo. */
 export function confirmEmail(publicHost, token, name) {
-  const link = `https://${publicHost}/demo/confirm?t=${token}`;
+  // The token is in the fragment, which browsers never send to a server, so it stays out of every log.
+  const link = `https://${publicHost}/demo/confirm#${token}`;
   const first = String(name ?? "").trim().split(/\s+/)[0] || "there";
   return {
     link,

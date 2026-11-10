@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Harbourline live demo</title>
+  <meta name="description" content="Try an AI enquiry agent with your own enquiry: Claude classifies it, drafts a reply from the business's real data, and you approve it.">
+  <link rel="icon" href="/demo/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/demo/assets/style.css">
+  <script src="/demo/assets/form.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <p class="brand"><img src="/demo/assets/icon.svg" alt="" width="28" height="28"> Harbourline <span>live demo</span></p>
+      <p class="tag">Fictional company · real AI pipeline</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>Send an enquiry, watch an AI agent handle it, then decide what it sends.</h1>
+      <p class="lead">Harbourline Plumbing &amp; Heating is a made-up company. Its enquiry agent is real: Claude reads your
+        message, checks the business's services, prices and diary through its own tools, drafts a reply, and waits for a
+        person to approve it. On this page, that person is you. If you approve, the reply is emailed to you.</p>
+      <ol class="how">
+        <li><strong>Send an enquiry</strong> below (or start from an example).</li>
+        <li><strong>Confirm by email.</strong> We send a link to the address you give, so nobody can use yours.</li>
+        <li><strong>Watch it being handled</strong>, step by step, with timing and cost. It takes about a minute.</li>
+        <li><strong>Approve, edit or reject</strong> the draft, as the business owner would in Slack.</li>
+      </ol>
+    </section>
+
+    <section class="card" id="start" aria-labelledby="form-title">
+      <h2 id="form-title">Your enquiry</h2>
+      <div class="examples" role="group" aria-label="Start from an example">
+        <span>Try an example:</span>
+        <button type="button" class="chip" data-example="quote">A quote request</button>
+        <button type="button" class="chip" data-example="emergency">An emergency</button>
+        <button type="button" class="chip" data-example="injection">A prompt-injection attempt</button>
+      </div>
+      <form id="enquiry" novalidate>
+        <div class="row">
+          <label>Your name <input name="name" autocomplete="name" maxlength="80" required placeholder="Any name is fine"></label>
+          <label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required placeholder="Where the confirm link goes"></label>
+        </div>
+        <div class="row">
+          <label>Postcode <span class="opt">(optional, UK)</span> <input name="postcode" maxlength="10" placeholder="BS6 6AL"></label>
+          <label>What is it about?
+            <select name="service_needed">
+              <option>Boiler or heating</option>
+              <option>Leak, pipe or blockage</option>
+              <option>Bathroom or shower</option>
+              <option>Gas appliance or safety certificate</option>
+              <option>Something urgent</option>
+              <option selected>Something else</option>
+            </select>
+          </label>
+        </div>
+        <label>Message <textarea name="message" rows="6" maxlength="3000" required placeholder="What's happening, and when would suit you?"></textarea></label>
+        <label class="hp" aria-hidden="true">Website <input name="website" tabindex="-1" autocomplete="off"></label>
+        <p class="error" id="form-error" role="alert" hidden></p>
+        <div class="actions">
+          <button type="submit" class="primary">Send enquiry</button>
+          <p class="small">By sending, you agree to the data notes below.</p>
+        </div>
+      </form>
+      <div id="sent" class="sent" hidden>
+        <h3>Check your inbox</h3>
+        <p>We've sent a confirmation link to <strong id="sent-to"></strong>. Open it and press <em>Start my demo</em>.
+          The link works for 24 hours. If it isn't there in a minute or two, look in your spam folder.</p>
+        <button type="button" class="link" id="again">Send a different enquiry</button>
+      </div>
+    </section>
+
+    <section class="notes" aria-labelledby="data-title">
+      <h2 id="data-title">What happens to what you send</h2>
+      <ul>
+        <li>Your enquiry is handled like a real one: it's saved, processed by Claude (Anthropic's API), and shown to the demo
+          team in their private Slack workspace.</li>
+        <li>You get at most two emails: the confirm link, and the reply if you approve it. Nothing else, ever.</li>
+        <li>Everything made from your enquiry (records, draft, Slack card) is <strong>deleted automatically after 7 days</strong>.
+          Unconfirmed submissions are deleted after a day.</li>
+        <li>Please don't include anything sensitive. Any name works.</li>
+        <li>If something looks wrong or you'd like it deleted sooner, reply to either email.</li>
+      </ul>
+      <p class="small">This demo is part of a freelance portfolio. The source code is public on
+        <a href="https://github.com/Raynor1511/ai-enquiry-agent">GitHub</a>.</p>
+    </section>
+  </main>
+</body>
+</html>

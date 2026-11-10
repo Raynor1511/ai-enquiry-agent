@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Your enquiry, live · Harbourline</title>
+  <link rel="icon" href="/demo/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/demo/assets/style.css">
+  <script src="/demo/assets/live.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <p class="brand"><img src="/demo/assets/icon.svg" alt="" width="28" height="28"> Harbourline <span>live demo</span></p>
+      <p class="tag">Fictional company · real AI pipeline</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="status" id="status" role="status" aria-live="polite">
+      <span class="dot" id="status-dot"></span>
+      <div>
+        <p class="status-title" id="status-title">Loading your enquiry…</p>
+        <p class="status-text" id="status-text"></p>
+      </div>
+    </div>
+
+    <ol class="stages" id="stages" aria-label="Progress">
+      <li data-stage="received">Received</li>
+      <li data-stage="classified">Classified</li>
+      <li data-stage="drafted">Drafted</li>
+      <li data-stage="decision">Your decision</li>
+      <li data-stage="done">Done</li>
+    </ol>
+
+    <div class="grid">
+      <div class="col">
+        <section class="card" id="enquiry-card" hidden>
+          <h2>Your enquiry</h2>
+          <dl class="facts" id="enquiry-facts"></dl>
+          <p class="quote" id="enquiry-message"></p>
+        </section>
+
+        <section class="card" id="classification-card" hidden>
+          <h2><span class="num">1</span> How Claude read it</h2>
+          <p class="explain">Claude Haiku sorts every enquiry and judges its urgency. Fixed safety rules run after it
+            (a gas smell is always an emergency, for example), and anything that tries to give the agent orders is flagged.</p>
+          <div class="badges" id="class-badges"></div>
+          <p class="summary" id="class-summary"></p>
+          <dl class="facts" id="class-facts"></dl>
+          <div id="class-flags"></div>
+        </section>
+
+        <section class="card" id="draft-card" hidden>
+          <h2><span class="num">2</span> The draft reply</h2>
+          <p class="explain">Claude Sonnet drafts the reply using the business's own tools: services and prices, policies,
+            customer records and the diary. Code then checks every price against what the tools returned, and that no
+            one else's contact details slipped in.</p>
+          <div class="tools" id="draft-tools"></div>
+          <div class="checks" id="draft-checks"></div>
+          <div id="draft-slots"></div>
+          <div class="email" id="draft-email">
+            <p class="email-subject" id="draft-subject"></p>
+            <p class="email-body" id="draft-body"></p>
+          </div>
+        </section>
+
+        <section class="card" id="decision-card" hidden>
+          <h2><span class="num">3</span> Your decision</h2>
+          <p class="explain">Nothing is ever sent without a person's approval. The business owner does this in Slack, where
+            the same card has just appeared. Here, it's your call: the reply goes only to the address you confirmed.</p>
+          <form id="decide-form">
+            <label>Subject <input id="edit-subject" maxlength="200"></label>
+            <label>Reply <span class="opt">(edit it if you like)</span> <textarea id="edit-body" rows="12" maxlength="6000"></textarea></label>
+            <div class="actions">
+              <button type="submit" class="primary" id="approve">Approve and send to me</button>
+              <button type="button" class="ghost" id="reject-open">Reject</button>
+            </div>
+            <div class="reject" id="reject-box" hidden>
+              <label>Why? <span class="opt">(optional, kept with the record)</span> <input id="reject-reason" maxlength="500"></label>
+              <button type="button" class="danger" id="reject">Reject: send nothing</button>
+            </div>
+            <p class="error" id="decide-error" role="alert" hidden></p>
+          </form>
+        </section>
+
+        <section class="card" id="outcome-card" hidden>
+          <h2><span class="num">3</span> What happened</h2>
+          <div id="outcome"></div>
+        </section>
+      </div>
+
+      <div class="col side">
+        <section class="card" id="timeline-card" hidden>
+          <h2>Timeline and cost</h2>
+          <ol class="timeline" id="timeline"></ol>
+          <p class="total" id="total"></p>
+        </section>
+
+        <section class="card" id="calendar-card" hidden>
+          <h2>The bookings calendar</h2>
+          <p class="explain">When an approved reply offers appointment slots, the agent pencils them in as tentative
+            holds (no names, just the job and area), released after 3 days unless confirmed.</p>
+          <div class="calendar" id="calendar"></div>
+        </section>
+
+        <section class="card small-card">
+          <h2>About this demo</h2>
+          <p class="small" id="retention">Everything made from your enquiry is deleted automatically after 7 days.</p>
+          <p class="small"><a href="/demo">Send another enquiry</a> · <a href="https://github.com/Raynor1511/ai-enquiry-agent">Source code</a></p>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

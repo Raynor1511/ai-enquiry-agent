@@ -76,7 +76,7 @@ test("demo requests are checked again inside n8n", async () => {
   assert.equal(checkStart({ ...good, name: " " }).error, "name missing");
 
   const mail = confirmEmail("enquiries.example.org", token, "Dana Visitor");
-  assert.equal(mail.link, `https://enquiries.example.org/demo/confirm?t=${token}`);
+  assert.equal(mail.link, `https://enquiries.example.org/demo/confirm#${token}`);
   assert.match(mail.body, /^Hi Dana,/);
   assert.match(mail.body, /fictional company/);
   assert.match(mail.body, /deleted automatically after 7 days/);
