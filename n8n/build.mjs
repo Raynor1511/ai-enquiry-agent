@@ -21,6 +21,7 @@ export const WF = {
   draft: "Harbourline · Draft reply",
   approval: "Harbourline · Post for approval",
   interactions: "Harbourline · Slack interactions",
+  decide: "Harbourline · Decide reply",
   intake: "Harbourline · Intake (form + Gmail)",
   testIntake: "Harbourline · Test intake (eval)",
   alerts: "Harbourline · Alerts",
@@ -750,37 +751,18 @@ if (!p.ok) alerts.push(failureAlert("send_failed", { ...base, error: p.send.erro
 if (o.holds_failed > 0) alerts.push(failureAlert("holds_failed", { ...base, error: o.holds_failed + " of " + (o.holds_failed + o.holds_ok) + " hold(s) failed: " + o.hold_errors.join("; ") }));
 return alerts.filter(Boolean).map((json) => ({ json }));`);
 
-const interactions = workflow(
-  WF.interactions,
+/**
+ * Decide reply (sub-workflow): approve, approve with edits, or reject one draft. Called by the Slack
+ * interactions workflow and by the demo page, with { route: { kind, draft_id, user, subject?, body?,
+ * reason? } }. The claim on the draft is atomic, so a second decision on the same draft does nothing
+ * and returns no items. Returns one item describing what happened (the result nodes run last).
+ */
+const decide = workflow(
+  WF.decide,
   [
-    {
-      name: "Slack interaction", type: "n8n-nodes-base.webhook", typeVersion: 2, position: [0, 300], webhookId: uuid("webhook/slack-interactions"),
-      // No header auth is possible for Slack: every request is verified by its signature in the next node.
-      parameters: { httpMethod: "POST", path: PATHS.slack, responseMode: "responseNode", options: { rawBody: true } },
-    },
-    codeNode("Verify signature + route", [220, 300], code("approval", `
-// Injected at deploy time; the committed workflow only contains the placeholder.
-const SIGNING_SECRET = "__SECRET__SLACK_SIGNING_SECRET";
-const item = $input.first();
-let raw;
-try {
-  raw = (await this.helpers.getBinaryDataBuffer(0, "data")).toString("utf8");
-} catch {
-  raw = item.binary?.data?.data ? Buffer.from(item.binary.data.data, "base64").toString("utf8") : "";
-}
-const h = item.json.headers ?? {};
-const check = verifySlackSignature({ rawBody: raw, timestamp: h["x-slack-request-timestamp"], signature: h["x-slack-signature"], secret: SIGNING_SECRET, nowSeconds: Math.floor(Date.now() / 1000) });
-if (!check.ok) return [{ json: { ok: false, reason: check.reason } }];
-let route;
-try { route = routeInteraction(parseInteraction(raw)); } catch (e) { route = { kind: "ignore", reason: e.message }; }
-return [{ json: { ok: true, route } }];`), "runOnceForAllItems"),
-    ifTrue("Genuine Slack request?", [440, 300], "$json.ok"),
-    respondNode("Reject request", [660, 480], { respondWith: "text", responseBody: "Unauthorised", options: { responseCode: 401 } }),
-    // Slack needs an answer within 3 seconds, and an empty 200 to close a modal on submit.
-    respondNode("Acknowledge Slack", [660, 220], { respondWith: "noData", options: { responseCode: 200 } }),
-    ifTrue("Approve or edited reply?", [880, 220], `["approve", "edit_submit"].includes($json.route.kind)`),
-
-    // --- send path
+    { name: "When called by another workflow", type: "n8n-nodes-base.executeWorkflowTrigger", typeVersion: 1.1, position: [880, 300], parameters: { inputSource: "passthrough" } },
+    ifTrue("Send it?", [880, 520], `["approve", "edit_submit"].includes($json.route.kind)`),
+    // --- send path (approve or edited)
     codeNode("Decision", [1100, 120], code(null, `
 const r = $json.route;
 return { json: { ...r, decision: r.kind === "edit_submit" ? "edited" : "approved", params: [r.draft_id] } };`)),
@@ -864,6 +846,97 @@ return [{ json: { update, outcome, holds_ok: $json.holds_ok ?? 0, holds_failed: 
     ifTrue("Card to update?", [4180, 120], `$("Outcome card").first().json.update !== null`),
     slackApiNode("Slack: update card", [4400, 120], "chat.update", `={{ JSON.stringify($("Outcome card").first().json.update) }}`),
 
+    codeNode("Decision result", [4180, 300], code(null, `
+const o = $("Outcome card").first().json.outcome;
+const p = $("After send").first().json;
+return [{ json: { decision: p.ctx.decision, status: o.status, error: o.error ?? null, enquiry_id: p.row.enquiry_id, draft_id: p.row.draft_id,
+  final_subject: p.final_subject, final_body: p.final_body, holds: o.holds, customer_created: o.customer_created, job_created: o.job_created } }];`), "runOnceForAllItems"),
+
+    // --- reject path
+    ifTrue("Reject it?", [1540, 800], `$json.route.kind === "reject_submit"`),
+    codeNode("Reject decision", [1760, 800], code(null, `
+const r = $json.route;
+const detail = { decision: "rejected", by: r.user, reason: r.reason || null };
+return { json: { route: r, params: [r.draft_id, r.user.name, r.user.id ?? "", r.reason ?? "", String($execution.id), JSON.stringify(detail)] } };`)),
+    pgNode("Record rejection", [1980, 800], REJECT_SQL),
+    codeNode("Rejected card", [2200, 800], code("approval", `
+const r = $("Reject decision").item.json.route;
+const row = { ...$json, body: $json.draft_body };
+const outcome = { status: "rejected", by: r.user.name, reason: r.reason };
+return { json: { update: row.slack_channel && row.slack_ts ? outcomeCard(row.slack_channel, row.slack_ts, approvalCard(row.slack_channel, row), outcome) : null } };`)),
+    slackApiNode("Slack: mark rejected", [2420, 800], "chat.update", "={{ JSON.stringify($json.update) }}"),
+
+    codeNode("Rejection result", [2420, 980], code(null, `
+const r = $("Reject decision").first().json.route;
+return [{ json: { decision: "rejected", status: "rejected", reason: r.reason || null, enquiry_id: $("Record rejection").first().json.enquiry_id, draft_id: r.draft_id } }];`), "runOnceForAllItems"),
+  ],
+  [
+    ["When called by another workflow", "Send it?"],
+    ["Send it?", "Decision", 0],
+    ["Send it?", "Reject it?", 1],
+    ["Decision", "Claim draft"],
+    ["Claim draft", "Plan email"],
+    ["Plan email", "Send by Gmail?"],
+    ["Send by Gmail?", "Reply in thread?", 0],
+    ["Send by Gmail?", "After send", 1],
+    ["Reply in thread?", "Gmail: reply in thread", 0],
+    ["Reply in thread?", "Gmail: send new email", 1],
+    ["Gmail: reply in thread", "After send"],
+    ["Gmail: send new email", "After send"],
+    ["After send", "Record decision"],
+    ["Record decision", "Plan holds"],
+    ["Plan holds", "Any holds?"],
+    ["Any holds?", "Calendar: tentative hold", 0],
+    ["Any holds?", "Outcome card", 1],
+    ["Calendar: tentative hold", "Collect holds"],
+    ["Collect holds", "Outcome card"],
+    ["Outcome card", "Log outcome"],
+    ...sendAlert.edges,
+    ["Log outcome", "Card to update?"],
+    ["Card to update?", "Slack: update card", 0],
+    ["Log outcome", "Decision result"],
+    ["Reject it?", "Reject decision", 0],
+    ["Reject decision", "Record rejection"],
+    ["Record rejection", "Rejected card"],
+    ["Rejected card", "Slack: mark rejected"],
+    ["Rejected card", "Rejection result"],
+  ],
+  { callerPolicy: "workflowsFromSameOwner" },
+);
+
+const interactions = workflow(
+  WF.interactions,
+  [
+    {
+      name: "Slack interaction", type: "n8n-nodes-base.webhook", typeVersion: 2, position: [0, 300], webhookId: uuid("webhook/slack-interactions"),
+      // No header auth is possible for Slack: every request is verified by its signature in the next node.
+      parameters: { httpMethod: "POST", path: PATHS.slack, responseMode: "responseNode", options: { rawBody: true } },
+    },
+    codeNode("Verify signature + route", [220, 300], code("approval", `
+// Injected at deploy time; the committed workflow only contains the placeholder.
+const SIGNING_SECRET = "__SECRET__SLACK_SIGNING_SECRET";
+const item = $input.first();
+let raw;
+try {
+  raw = (await this.helpers.getBinaryDataBuffer(0, "data")).toString("utf8");
+} catch {
+  raw = item.binary?.data?.data ? Buffer.from(item.binary.data.data, "base64").toString("utf8") : "";
+}
+const h = item.json.headers ?? {};
+const check = verifySlackSignature({ rawBody: raw, timestamp: h["x-slack-request-timestamp"], signature: h["x-slack-signature"], secret: SIGNING_SECRET, nowSeconds: Math.floor(Date.now() / 1000) });
+if (!check.ok) return [{ json: { ok: false, reason: check.reason } }];
+let route;
+try { route = routeInteraction(parseInteraction(raw)); } catch (e) { route = { kind: "ignore", reason: e.message }; }
+return [{ json: { ok: true, route } }];`), "runOnceForAllItems"),
+    ifTrue("Genuine Slack request?", [440, 300], "$json.ok"),
+    respondNode("Reject request", [660, 480], { respondWith: "text", responseBody: "Unauthorised", options: { responseCode: 401 } }),
+    // Slack needs an answer within 3 seconds, and an empty 200 to close a modal on submit.
+    respondNode("Acknowledge Slack", [660, 220], { respondWith: "noData", options: { responseCode: 200 } }),
+    ifTrue("Approve or edited reply?", [880, 220], `["approve", "edit_submit"].includes($json.route.kind)`),
+
+    // Approve, Edit and Reject run in the shared "Decide reply" sub-workflow, also used by the demo page.
+    callWorkflow("Decide (approve or edit)", [1100, 120], WF.decide),
+
     // --- edit and reject modals
     ifTrue("Open edit?", [1100, 420], `$json.route.kind === "edit_open"`),
     ifTrue("Draft text in button?", [1320, 380], "$json.route.body !== null && $json.route.body !== undefined"),
@@ -880,19 +953,8 @@ const r = $json.route;
 return { json: { trigger_id: r.trigger_id, view: rejectModal(r.draft_id, r.channel, r.ts) } };`)),
     slackApiNode("Slack: open modal", [1980, 480], "views.open", "={{ JSON.stringify({ trigger_id: $json.trigger_id, view: $json.view }) }}"),
 
-    // --- reject path
     ifTrue("Reject submitted?", [1540, 800], `$json.route.kind === "reject_submit"`),
-    codeNode("Reject decision", [1760, 800], code(null, `
-const r = $json.route;
-const detail = { decision: "rejected", by: r.user, reason: r.reason || null };
-return { json: { route: r, params: [r.draft_id, r.user.name, r.user.id ?? "", r.reason ?? "", String($execution.id), JSON.stringify(detail)] } };`)),
-    pgNode("Record rejection", [1980, 800], REJECT_SQL),
-    codeNode("Rejected card", [2200, 800], code("approval", `
-const r = $("Reject decision").item.json.route;
-const row = { ...$json, body: $json.draft_body };
-const outcome = { status: "rejected", by: r.user.name, reason: r.reason };
-return { json: { update: row.slack_channel && row.slack_ts ? outcomeCard(row.slack_channel, row.slack_ts, approvalCard(row.slack_channel, row), outcome) : null } };`)),
-    slackApiNode("Slack: mark rejected", [2420, 800], "chat.update", "={{ JSON.stringify($json.update) }}"),
+    callWorkflow("Decide (reject)", [1760, 800], WF.decide),
 
     // --- "Process" on a Spam-folder alert (Housekeeping): run the email through the normal pipeline.
     // Gmail's trigger never sees mail moved out of Spam (it only looks for mail newer than its last
@@ -929,28 +991,8 @@ return [{ json: { message: rescueReply(r.channel, r.ts, r.user, $("Classify (res
     ["Genuine Slack request?", "Acknowledge Slack", 0],
     ["Genuine Slack request?", "Reject request", 1],
     ["Acknowledge Slack", "Approve or edited reply?"],
-    ["Approve or edited reply?", "Decision", 0],
+    ["Approve or edited reply?", "Decide (approve or edit)", 0],
     ["Approve or edited reply?", "Open edit?", 1],
-    ["Decision", "Claim draft"],
-    ["Claim draft", "Plan email"],
-    ["Plan email", "Send by Gmail?"],
-    ["Send by Gmail?", "Reply in thread?", 0],
-    ["Send by Gmail?", "After send", 1],
-    ["Reply in thread?", "Gmail: reply in thread", 0],
-    ["Reply in thread?", "Gmail: send new email", 1],
-    ["Gmail: reply in thread", "After send"],
-    ["Gmail: send new email", "After send"],
-    ["After send", "Record decision"],
-    ["Record decision", "Plan holds"],
-    ["Plan holds", "Any holds?"],
-    ["Any holds?", "Calendar: tentative hold", 0],
-    ["Any holds?", "Outcome card", 1],
-    ["Calendar: tentative hold", "Collect holds"],
-    ["Collect holds", "Outcome card"],
-    ["Outcome card", "Log outcome"],
-    ...sendAlert.edges,
-    ["Log outcome", "Card to update?"],
-    ["Card to update?", "Slack: update card", 0],
     ["Open edit?", "Draft text in button?", 0],
     ["Open edit?", "Open reject?", 1],
     ["Draft text in button?", "Edit modal", 0],
@@ -961,10 +1003,7 @@ return [{ json: { message: rescueReply(r.channel, r.ts, r.user, $("Classify (res
     ["Open reject?", "Reject modal", 0],
     ["Open reject?", "Reject submitted?", 1],
     ["Reject modal", "Slack: open modal"],
-    ["Reject submitted?", "Reject decision", 0],
-    ["Reject decision", "Record rejection"],
-    ["Record rejection", "Rejected card"],
-    ["Rejected card", "Slack: mark rejected"],
+    ["Reject submitted?", "Decide (reject)", 0],
     ["Reject submitted?", "Process spam email?", 1],
     ["Process spam email?", "Gmail: get the spam email", 0],
     ["Gmail: get the spam email", "Normalise rescued email"],
@@ -1279,6 +1318,7 @@ export const WORKFLOWS = [
   { file: "classify.json", workflow: classify, activate: true },
   { file: "draft.json", workflow: draft, activate: true },
   { file: "approval.json", workflow: approval, activate: true },
+  { file: "decide.json", workflow: decide, activate: true },
   { file: "interactions.json", workflow: interactions, activate: true },
   { file: "intake.json", workflow: intake, activate: true },
   { file: "test-intake.json", workflow: testIntake, activate: true },

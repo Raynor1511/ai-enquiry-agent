@@ -39,7 +39,7 @@ test("demo holds never carry the visitor's name; other holds still do", () => {
 
 test("an approved demo reply is a new email to the confirmed address (never a thread reply)", () => {
   const row = { source: "demo", message_id: "demo:x", sender_email: "dana@visitor-mail.example.org" };
-  assert.equal(emailPlan({ ...row, sender_email: "dana.visitor@gmail.com" }, "Re: boiler", "Hello").mode, "send");
+  assert.equal(emailPlan({ ...row, sender_email: "d.visitor.fixture.harbourline@gmail.com" }, "Re: boiler", "Hello").mode, "send");
   assert.equal(emailPlan(row, "Re: boiler", "Hello").mode, "simulated", "reserved domains stay simulated");
 });
 

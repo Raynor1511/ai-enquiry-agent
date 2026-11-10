@@ -38,12 +38,14 @@ test("handled-failure branches run before the result node and can never stop the
     [WF.classify, "Save classification + audit", "Result"],
     [WF.draft, "Save draft + audit", "Draft result"],
     [WF.approval, "Save card + status", "Approval result"],
-    [WF.interactions, "Log outcome", "Card to update?"],
+    // Decide reply also updates the Slack card in a branch between the alert and the result.
+    [WF.decide, "Log outcome", "Decision result", ["Card to update?"]],
   ];
-  for (const [name, from, result] of cases) {
+  for (const [name, from, result, others = []] of cases) {
     const wf = all.find((w) => w.name === name);
     const targets = wf.connections[from].main[0].map((c) => c.node);
-    assert.deepEqual(new Set(targets), new Set(["Failure alert?", result]), name);
+    assert.deepEqual(new Set(targets), new Set(["Failure alert?", result, ...others]), name);
+    for (const o of others) assert.ok(byName(wf, o).position[1] < byName(wf, result).position[1], `${name}: ${o} runs before the result`);
     // Execution order v1 runs the topmost branch first, so the sub-workflow's last node is still the result.
     assert.ok(byName(wf, "Failure alert?").position[1] < byName(wf, result).position[1], `${name}: alert branch above`);
     const call = byName(wf, "Alert #alerts");
@@ -95,13 +97,13 @@ test("the deployed alert-branch code builds the right payloads from real upstrea
 
   // Interactions: send failure and hold failures.
   const after = { ok: false, send: { error: "Gmail returned no message id" }, row: { ...row, is_test: false }, final_subject: "Re: Leak", ctx: { user: { name: "Sam" } } };
-  out = await runNode(WF.interactions, "Failure alert?", { nodes: { "After send": after, "Outcome card": { holds_ok: 0, holds_failed: 0, hold_errors: [] } } });
+  out = await runNode(WF.decide, "Failure alert?", { nodes: { "After send": after, "Outcome card": { holds_ok: 0, holds_failed: 0, hold_errors: [] } } });
   assert.deepEqual(out.map((o) => o.json.alert), ["send_failed"]);
   assert.equal(out[0].json.by, "Sam");
-  out = await runNode(WF.interactions, "Failure alert?", { nodes: { "After send": { ...after, ok: true }, "Outcome card": { holds_ok: 2, holds_failed: 1, hold_errors: ["Forbidden"] } } });
+  out = await runNode(WF.decide, "Failure alert?", { nodes: { "After send": { ...after, ok: true }, "Outcome card": { holds_ok: 2, holds_failed: 1, hold_errors: ["Forbidden"] } } });
   assert.deepEqual(out.map((o) => o.json.alert), ["holds_failed"]);
   assert.equal(out[0].json.error, "1 of 3 hold(s) failed: Forbidden");
-  assert.deepEqual(await runNode(WF.interactions, "Failure alert?", { nodes: { "After send": { ...after, ok: true }, "Outcome card": { holds_ok: 3, holds_failed: 0, hold_errors: [] } } }), []);
+  assert.deepEqual(await runNode(WF.decide, "Failure alert?", { nodes: { "After send": { ...after, ok: true }, "Outcome card": { holds_ok: 3, holds_failed: 0, hold_errors: [] } } }), []);
 });
 
 test("the deployed Alerts code posts, mutes repeats in static data, and fails loudly if Slack refuses", async () => {
@@ -127,4 +129,16 @@ test("every Postgres query in the workflows is one that db-setup replays as the 
   const queries = all.flatMap((wf) => wf.nodes.filter((n) => n.type === "n8n-nodes-base.postgres").map((n) => [wf.name, n.name, n.parameters.query]));
   assert.ok(queries.length >= 11);
   for (const [wf, node, q] of queries) assert.ok(known.has(q), `${wf} / ${node}: add its query to SQL in n8n/build.mjs and to scripts/lib/n8n-role-check.mjs`);
+});
+
+test("Slack and the demo page share one decision path; the reject result comes last", () => {
+  const interactions = all.find((w) => w.name === WF.interactions);
+  const decide = all.find((w) => w.name === WF.decide);
+  const calls = interactions.nodes.filter((n) => n.type === "n8n-nodes-base.executeWorkflow" && n.parameters.workflowId.value === `__WORKFLOW__${WF.decide}`).map((n) => n.name);
+  assert.deepEqual(calls.sort(), ["Decide (approve or edit)", "Decide (reject)"]);
+  for (const gone of ["Claim draft", "Record decision", "Record rejection", "Gmail: send new email"]) assert.ok(!interactions.nodes.some((n) => n.name === gone), `${gone} moved out of Slack interactions`);
+  assert.ok(WORKFLOWS.findIndex((w) => w.workflow.name === WF.decide) < WORKFLOWS.findIndex((w) => w.workflow.name === WF.interactions), "published before its caller");
+  const after = decide.connections["Rejected card"].main[0].map((c) => c.node);
+  assert.deepEqual(new Set(after), new Set(["Slack: mark rejected", "Rejection result"]));
+  assert.ok(byName(decide, "Slack: mark rejected").position[1] < byName(decide, "Rejection result").position[1]);
 });
