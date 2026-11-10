@@ -96,4 +96,41 @@ Request settings:
 | `cache_control` | Automatic | The system prompt, tools and earlier turns are cached across the loop |
 | Sampling parameters, forced `tool_choice` | Not sent | This model rejects both |
 
-Measured results: [eval/reports/phase-3-drafting.md](../eval/reports/phase-3-drafting.md). All 34 enquiries that needed a reply got a draft. After the fixes, a draft averages 2.2 turns, about $0.03 and about 10 s.
+Measured results: [eval/reports/phase-3-drafting.md](../eval/reports/phase-3-drafting.md).
+
+## Phase 4: approval and actions
+
+```mermaid
+sequenceDiagram
+    participant N as n8n
+    participant S as Slack #enquiries
+    participant P as Person
+    participant G as Gmail
+    participant DB as Supabase
+    participant C as Google Calendar
+    N->>S: Approval card (summary, draft, checks, holds) + Approve / Edit / Reject
+    P->>S: Clicks a button (Edit opens a modal with the draft)
+    S->>N: Signed interaction (public webhook via ngrok)
+    N->>N: Verify Slack signature (HMAC-SHA256, 5-minute window)
+    N-->>S: 200 within milliseconds
+    N->>DB: Claim the draft (awaiting_approval -> sending, atomic)
+    N->>G: Reply in the email thread / new email to the web-form sender
+    N->>DB: Approval, final text, new customer, job, status sent, audit
+    N->>C: Tentative holds for the offered slots
+    N->>S: Card updated with the outcome
+```
+
+| What | How |
+| --- | --- |
+| Card | Posted to **#enquiries** by the **Post for approval** sub-workflow after every live draft (never for tests); a failed draft gets a "manual reply needed" card. Customer text is escaped; **Approve** asks for confirmation; the **Edit** button carries the draft text so the modal opens instantly (Slack allows 3 s) |
+| Request verification | Slack signs every request; the **Slack interactions** workflow checks the signature over the raw body with a pure-JavaScript HMAC-SHA256 (n8n's Code sandbox blocks `crypto`), rejects anything older than 5 minutes, and answers Slack immediately |
+| No double sending | The first click atomically moves the enquiry from `awaiting_approval` to `sending`; any later click on the same card finds nothing to claim and does nothing |
+| Sending | Only ever to the stored sender address. Email enquiries are answered **in their thread** (reply-to-sender-only); web-form enquiries get a new email. Reserved test domains (`example.com`, `*.example`, ...) are **simulated**, never sent, so they can't bounce back into the inbox. The Gmail trigger ignores the mailbox's own messages, so replies never loop back in as enquiries |
+| Records | `approvals` (decision, who, Slack user id, final subject and text, send mode); a new `customers` row for senders who weren't verified customers; a `jobs` row for bookings, quotes and emergencies; enquiry status `sent` / `rejected` / `failed` |
+| Calendar | One tentative, opaque, yellow "HOLD" event per offered slot, tagged with the enquiry id (`extendedProperties.private.harbourlineHold`) so holds can be found and cleared |
+| Edits | The edited text is stored next to the AI draft, for improving prompts later |
+| Card outcome | Buttons are replaced by "Sent / Edited and sent / Rejected / Sending failed", who did it, holds added and records created; an edited reply shows the text actually sent |
+
+The signing secret reaches the verification node at deploy time only (`__SECRET__` placeholder, strict allowlist and format check in `n8n/deploy.mjs`); the committed workflow files never contain it.
+
+Tested: unit tests (HMAC checked against Node's `crypto` on 300 random inputs, routing, cards, modals, email plans); security checks through the public tunnel (no / forged / tampered / replayed signatures all get 401); a synthetic end-to-end run of approve, double-approve, edit-submit, reject and edit-open against the real workflows, database and calendar; and a live run (web form → card → Edit → email received, card updated, three tentative holds, customer and job created). All 34 enquiries that needed a reply got a draft. After the fixes, a draft averages 2.2 turns, about $0.03 and about 10 s.

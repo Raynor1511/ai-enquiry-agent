@@ -34,7 +34,7 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | 1 | Intake and classification (n8n) | **Done**: web form, Gmail and test webhook → Claude Haiku 5.5 → Supabase. 97.5% category accuracy, every emergency and injection caught ([pipeline](docs/pipeline.md), [report](eval/reports/phase-1-intake.md)) |
 | 2 | MCP server | **Done**: 4 tools, 122 tests, Supabase and Google Calendar backends, Docker image |
 | 3 | Drafting | **Done**: Claude Sonnet 5.5 tool loop over the MCP server, grounded-price and contact checks, instant emergency alerts in Slack. 34/34 drafts, about $0.03 each ([report](eval/reports/phase-3-drafting.md)) |
-| 4 | Slack approval and actions | Not started |
+| 4 | Slack approval and actions | **Done**: approval card with Approve / Edit / Reject, signature-verified webhook, threaded Gmail replies, customer + job records, tentative calendar holds, outcome on the card ([pipeline](docs/pipeline.md#phase-4-approval-and-actions)) |
 | 5 | Reliability and safety | Partly designed in (read-only role, dedupe key, audit tables) |
 | 6 | Evaluation | **Labelled test set and intake runner done** (`eval/run-intake.mjs`); drafting scores and a held-out set still to come |
 | 7 | Packaging | Not started |

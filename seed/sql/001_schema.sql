@@ -108,9 +108,7 @@ create table if not exists enquiries (
   body           text not null,
   form_fields    jsonb,
   received_at    timestamptz not null,
-  status         text not null default 'received' check (status in (
-                   'received', 'classified', 'drafted', 'awaiting_approval',
-                   'sent', 'rejected', 'archived', 'needs_review', 'failed')),
+  status         text not null default 'received',
   category       text check (category in ('new_job_request', 'quote_request', 'emergency', 'complaint', 'existing_customer_followup', 'spam')),
   urgency        text check (urgency in ('emergency', 'high', 'normal', 'low')),
   is_suspicious  boolean not null default false,
@@ -121,6 +119,12 @@ create table if not exists enquiries (
   updated_at     timestamptz not null default now()
 );
 create index if not exists enquiries_status_idx on enquiries (status, received_at desc);
+-- Status values (re-created so existing databases pick up new ones). 'sending' is the lock that
+-- stops a reply being sent twice when two people click Approve.
+alter table enquiries drop constraint if exists enquiries_status_check;
+alter table enquiries add constraint enquiries_status_check check (status in (
+  'received', 'classified', 'drafted', 'awaiting_approval', 'sending',
+  'sent', 'rejected', 'archived', 'needs_review', 'failed'));
 
 create table if not exists jobs (
   id                 text primary key default ('job_' || substr(md5(random()::text || clock_timestamp()::text), 1, 12)),
@@ -159,6 +163,9 @@ alter table drafts add column if not exists subject text;
 alter table drafts add column if not exists needs_review boolean not null default false;
 alter table drafts add column if not exists review_reason text;
 alter table drafts add column if not exists customer_id text references customers (id) on delete set null;
+-- Added in Phase 4: where the approval card was posted, so it can be updated with the outcome.
+alter table drafts add column if not exists slack_channel text;
+alter table drafts add column if not exists slack_ts text;
 
 create table if not exists approvals (
   id          uuid primary key default gen_random_uuid(),
@@ -170,6 +177,9 @@ create table if not exists approvals (
   reason      text,
   decided_at  timestamptz not null default now()
 );
+alter table approvals add column if not exists final_subject text;
+alter table approvals add column if not exists slack_user_id text;
+alter table approvals add column if not exists send_mode text;
 
 create table if not exists audit_log (
   id                     bigint generated always as identity primary key,

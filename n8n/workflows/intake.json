@@ -141,6 +141,27 @@
       }
     },
     {
+      "id": "56fd169a-8a6c-4d3e-a728-f2e35ea70956",
+      "name": "Post for approval (form)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW__Harbourline · Post for approval",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
       "id": "f970f935-1a58-4856-a053-2a00c4096aeb",
       "name": "New email in inbox",
       "type": "n8n-nodes-base.gmailTrigger",
@@ -160,7 +181,7 @@
         "simple": false,
         "filters": {
           "readStatus": "unread",
-          "q": "in:inbox",
+          "q": "in:inbox -from:me",
           "includeSpamTrash": false
         },
         "options": {}
@@ -230,12 +251,33 @@
       }
     },
     {
+      "id": "0ee26959-f777-4b18-a7bb-7ec9d0a0276d",
+      "name": "Post for approval (email)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        260
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW__Harbourline · Post for approval",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
       "id": "9c97c8ed-ecff-4c6b-ae2c-3897d36bd131",
       "name": "Mark email as read",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        960,
+        1200,
         260
       ],
       "parameters": {
@@ -285,6 +327,17 @@
         ]
       ]
     },
+    "Draft reply (form)": {
+      "main": [
+        [
+          {
+            "node": "Post for approval (form)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "New email in inbox": {
       "main": [
         [
@@ -319,6 +372,17 @@
       ]
     },
     "Draft reply (email)": {
+      "main": [
+        [
+          {
+            "node": "Post for approval (email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post for approval (email)": {
       "main": [
         [
           {

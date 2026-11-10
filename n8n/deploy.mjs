@@ -40,21 +40,31 @@ const existing = new Map((await listAll("/workflows")).map((w) => [w.name, w]));
 const deployedIds = new Map();
 
 /**
- * Replace placeholders with this instance's values:
+ * Replace placeholders with this instance's values, only ever in memory (the files in n8n/workflows/
+ * keep the placeholders):
  *   "__CREDENTIAL__<name>" / "__WORKFLOW__<name>"  -> ids looked up by name
- *   __ENV__<KEY>  (anywhere, e.g. inside Code)     -> a non-secret id from .env, such as a Slack channel id
+ *   __ENV__<KEY>     -> a non-secret id from .env (Slack channel, calendar id)
+ *   __SECRET__<KEY>  -> the one secret a Code node needs: Slack's signing secret, to verify requests
+ *                       (n8n's Code sandbox can't read credentials)
+ * Each key has a strict allowlist and format, so nothing else can be inlined by accident.
  */
-const ENV_ALLOWED = new Set(["SLACK_ALERTS_CHANNEL_ID", "SLACK_APPROVAL_CHANNEL_ID"]);
+const ENV_ALLOWED = {
+  SLACK_ALERTS_CHANNEL_ID: /^[A-Z0-9]{8,14}$/,
+  SLACK_APPROVAL_CHANNEL_ID: /^[A-Z0-9]{8,14}$/,
+  GOOGLE_CALENDAR_ID: /^[a-z0-9._-]+@group\.calendar\.google\.com$/,
+};
+const SECRET_ALLOWED = { SLACK_SIGNING_SECRET: /^[0-9a-f]{32}$/ };
 function resolve(wf) {
   let json = JSON.stringify(wf).replace(/"__(CREDENTIAL|WORKFLOW)__([^"]+)"/g, (_, kind, name) => {
     const id = kind === "CREDENTIAL" ? credentials.get(name) : deployedIds.get(name) ?? existing.get(name)?.id;
     if (!id) throw new Error(`${kind.toLowerCase()} "${name}" not found in n8n (run scripts/n8n-credentials.mjs / deploy order)`);
     return JSON.stringify(id);
   });
-  json = json.replace(/__ENV__([A-Z0-9_]+)/g, (_, key) => {
-    if (!ENV_ALLOWED.has(key)) throw new Error(`${key} may not be inlined into a workflow`);
+  json = json.replace(/__(ENV|SECRET)__([A-Z0-9_]+)/g, (_, kind, key) => {
+    const format = (kind === "ENV" ? ENV_ALLOWED : SECRET_ALLOWED)[key];
+    if (!format) throw new Error(`${key} may not be inlined into a workflow`);
     const value = env[key];
-    if (!value || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error(`${key} is missing or not a plain id in .env`);
+    if (!value || !format.test(value)) throw new Error(`${key} is missing or has an unexpected format in .env`);
     return value;
   });
   return JSON.parse(json);

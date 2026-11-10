@@ -19,6 +19,8 @@ const read = (p) => readFileSync(path.join(root, p), "utf8");
 export const WF = {
   classify: "Harbourline · Classify enquiry",
   draft: "Harbourline · Draft reply",
+  approval: "Harbourline · Post for approval",
+  interactions: "Harbourline · Slack interactions",
   intake: "Harbourline · Intake (form + Gmail)",
   testIntake: "Harbourline · Test intake (eval)",
 };
@@ -29,8 +31,9 @@ export const CRED = {
   testWebhook: "Harbourline test webhook",
   mcp: "Harbourline MCP server",
   slack: "Harbourline Slack",
+  calendar: "Harbourline Calendar",
 };
-export const PATHS = { form: "harbourline-enquiry", testWebhook: "harbourline-test-intake" };
+export const PATHS = { form: "harbourline-enquiry", testWebhook: "harbourline-test-intake", slack: "slack-interactions" };
 
 const CLASSIFIER_MODEL = process.env.CLASSIFIER_MODEL || "claude-haiku-5-5";
 const DRAFTING_MODEL = process.env.DRAFTING_MODEL || "claude-sonnet-5-5";
@@ -73,6 +76,13 @@ const LIB = {
     `const BUSINESS = ${JSON.stringify({ email: business.email, phone: business.phone })};`,
   ].join("\n"),
   slack: [inline("n8n/src/lib/slack.mjs"), `const ALERTS_CHANNEL = "__ENV__SLACK_ALERTS_CHANNEL_ID";`].join("\n"),
+  // Includes slack.mjs (slackEscape), so never combine "approval" with "slack" in one node.
+  approval: [
+    inline("n8n/src/lib/slack.mjs"),
+    inline("n8n/src/lib/approval.mjs"),
+    `const APPROVAL_CHANNEL = "__ENV__SLACK_APPROVAL_CHANNEL_ID";`,
+    `const CALENDAR_ID = "__ENV__GOOGLE_CALENDAR_ID";`,
+  ].join("\n"),
   normalise: inline("n8n/src/lib/normalise.mjs"),
   classification: [
     inline("n8n/src/lib/classification.mjs"),
@@ -205,6 +215,24 @@ const callWorkflow = (name, position, workflowName) => ({
 });
 const callClassify = (name, position) => callWorkflow(name, position, WF.classify);
 const callDraft = (name, position) => callWorkflow(name, position, WF.draft);
+const callApproval = (name, position) => callWorkflow(name, position, WF.approval);
+
+/** Slack Web API call with the bot token (explicit UTF-8 JSON, as Slack asks). */
+const slackApiNode = (name, position, method, bodyExpr) => ({
+  name, type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position,
+  parameters: {
+    method: "POST", url: `https://slack.com/api/${method}`,
+    authentication: "predefinedCredentialType", nodeCredentialType: "slackApi",
+    sendHeaders: true, headerParameters: { parameters: [{ name: "Content-Type", value: "application/json; charset=utf-8" }] },
+    sendBody: true, specifyBody: "json", jsonBody: bodyExpr, options: { timeout: 15000 },
+  },
+  credentials: cred("slackApi", CRED.slack),
+  retryOnFail: true, maxTries: 3, waitBetweenTries: 1000, onError: "continueRegularOutput",
+});
+
+const respondNode = (name, position, parameters) => ({
+  name, type: "n8n-nodes-base.respondToWebhook", typeVersion: 1.1, position, parameters,
+});
 
 // ---------------------------------------------------------------------------------------------
 // 1. Classify enquiry (sub-workflow)
@@ -496,7 +524,332 @@ return { json: { ...result, draft_id: $json.draft_id ?? null } };`)),
 );
 
 // ---------------------------------------------------------------------------------------------
-// 3. Intake: web form + Gmail
+// 3. Post for approval (sub-workflow): the approval card in #enquiries
+
+const CARD_COLUMNS = `e.id as enquiry_id, e.source, e.message_id, e.sender_name, e.sender_email, e.sender_phone,
+       to_char(e.received_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as received_at, e.classification, e.is_test, e.status,
+       d.id as draft_id, d.version, d.subject, d.body as draft_body, d.reasoning, d.grounding_check, d.proposed_slot,
+       d.review_reason, d.customer_id, d.slack_channel, d.slack_ts,
+       nullif(trim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), '') as customer_name`;
+
+const LOAD_CARD_SQL = `select ${CARD_COLUMNS}, e.body
+  from enquiries e
+  left join drafts d on d.id = nullif($2, '')::uuid
+  left join customers c on c.id = d.customer_id
+ where e.id = $1::uuid;`;
+
+const SAVE_CARD_SQL = `with d as (
+  update drafts set slack_channel = $2, slack_ts = $3 where id = nullif($1, '')::uuid and $5::boolean returning id
+), e as (
+  update enquiries set status = 'awaiting_approval'
+   where id = $4::uuid and $5::boolean and $8::boolean and status = 'drafted' returning id
+)
+insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail)
+values ($4::uuid, $6, 'approval', case when $5::boolean then 'card_posted' else 'card_failed' end, $7::jsonb)
+returning enquiry_id;`;
+
+const approval = workflow(
+  WF.approval,
+  [
+    { name: "When called by another workflow", type: "n8n-nodes-base.executeWorkflowTrigger", typeVersion: 1.1, position: [0, 300], parameters: { inputSource: "passthrough" } },
+    codeNode("What to post", [220, 300], code(null, `
+const r = $json;
+const post = Boolean(r.enquiry_id && ((r.status === "drafted" && r.draft_id) || r.status === "needs_review"));
+return { json: { enquiry_id: r.enquiry_id ?? null, draft_id: r.draft_id ?? "", status: r.status, review_reasons: r.review_reasons ?? [], post,
+                 reason: post ? null : \`nothing to post (status \${r.status})\`, params: [r.enquiry_id, r.draft_id ?? ""] } };`)),
+    ifTrue("Anything to post?", [440, 300], "$json.post"),
+    pgNode("Load for card", [660, 400], LOAD_CARD_SQL),
+    codeNode("Build card", [880, 400], code("approval", `
+const w = $("What to post").item.json;
+const row = $json;
+if (row.is_test) return { json: { post: false, reason: "test enquiries are never posted", enquiry_id: row.enquiry_id } };
+const hasDraft = w.status === "drafted" && Boolean(row.draft_id);
+const message = hasDraft ? approvalCard(APPROVAL_CHANNEL, { ...row, body: row.draft_body }) : manualCard(APPROVAL_CHANNEL, row, w.review_reasons);
+return { json: { post: true, has_draft: hasDraft, message, enquiry_id: row.enquiry_id, draft_id: row.draft_id ?? "" } };`)),
+    ifTrue("Post it?", [1100, 400], "$json.post"),
+    slackApiNode("Slack: post card", [1320, 480], "chat.postMessage", "={{ JSON.stringify($json.message) }}"),
+    codeNode("Card posted", [1540, 480], code(null, `
+const b = $("Build card").item.json;
+const res = $json;
+const ok = res.ok === true;
+const detail = { ok, error: res.error ?? null, has_draft: b.has_draft, channel: res.channel ?? null, ts: res.ts ?? null };
+return { json: { enquiry_id: b.enquiry_id, draft_id: b.draft_id, has_draft: b.has_draft, ok, channel: res.channel ?? "", ts: res.ts ?? "", error: res.error ?? null,
+  params: [b.draft_id, res.channel ?? "", res.ts ?? "", b.enquiry_id, String(ok), String($execution.id), JSON.stringify(detail), String(b.has_draft)] } };`)),
+    pgNode("Save card + status", [1760, 480], SAVE_CARD_SQL),
+    codeNode("Approval result", [1980, 480], code(null, `
+const c = $("Card posted").item.json;
+return { json: { status: c.ok ? (c.has_draft ? "awaiting_approval" : "manual_reply_card") : "card_failed", enquiry_id: c.enquiry_id, draft_id: c.draft_id || null, slack_ts: c.ts || null, error: c.error } };`)),
+    codeNode("Not posted", [1320, 160], code(null, `return { json: { status: "not_posted", enquiry_id: $json.enquiry_id ?? null, reason: $json.reason ?? "nothing to post" } };`)),
+  ],
+  [
+    ["When called by another workflow", "What to post"],
+    ["What to post", "Anything to post?"],
+    ["Anything to post?", "Load for card", 0],
+    ["Anything to post?", "Not posted", 1],
+    ["Load for card", "Build card"],
+    ["Build card", "Post it?"],
+    ["Post it?", "Slack: post card", 0],
+    ["Post it?", "Not posted", 1],
+    ["Slack: post card", "Card posted"],
+    ["Card posted", "Save card + status"],
+    ["Save card + status", "Approval result"],
+  ],
+  { callerPolicy: "workflowsFromSameOwner" },
+);
+
+// ---------------------------------------------------------------------------------------------
+// 4. Slack interactions: Approve / Edit / Reject (public webhook, Slack-signature verified)
+
+const CLAIM_SQL = `-- Atomically take the draft for sending: only one click can ever win.
+with claim as (
+  update enquiries e set status = 'sending'
+    from drafts d
+   where d.id = $1::uuid and d.enquiry_id = e.id and e.status = 'awaiting_approval'
+  returning e.id
+)
+select ${CARD_COLUMNS}
+  from claim join enquiries e on e.id = claim.id
+  join drafts d on d.id = $1::uuid
+  left join customers c on c.id = d.customer_id;`;
+
+const RECORD_SQL = `with e as (
+  select id, customer_id, sender_email, sender_phone, message_id from enquiries where id = $1::uuid
+), new_c as (
+  insert into customers (first_name, last_name, customer_type, email, phone, postcode, notes)
+  select $11, nullif($12, ''), 'residential', e.sender_email, nullif(e.sender_phone, ''), nullif($13, ''),
+         'Created from approved enquiry ' || e.message_id
+    from e where e.customer_id is null and $10::boolean
+  returning id
+), cust as (
+  select coalesce((select customer_id from e), (select id from new_c)) as id
+), job as (
+  insert into jobs (customer_id, service_id, status, job_date, notes, source_enquiry_id)
+  select (select id from cust), (select id from services where id = nullif($15, '')), 'enquiry', current_date, $16, $1::uuid
+   where $14::boolean and (select id from cust) is not null
+  returning id
+), appr as (
+  insert into approvals (enquiry_id, draft_id, decision, decided_by, slack_user_id, final_subject, final_text, send_mode)
+  values ($1::uuid, $2::uuid, $3, $4, nullif($5, ''), $6, $7, $8)
+  returning id
+), upd as (
+  update enquiries set status = $9, customer_id = coalesce(customer_id, (select id from new_c)) where id = $1::uuid returning id
+), aud as (
+  insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail) values ($1::uuid, $17, 'approval', $18, $19::jsonb)
+)
+select (select id from cust) as customer_id, (select id from new_c) as new_customer_id,
+       (select id from job) as job_id, (select id from appr) as approval_id;`;
+
+const REJECT_SQL = `with claim as (
+  update enquiries e set status = 'rejected'
+    from drafts d
+   where d.id = $1::uuid and d.enquiry_id = e.id and e.status = 'awaiting_approval'
+  returning e.id
+), appr as (
+  insert into approvals (enquiry_id, draft_id, decision, decided_by, slack_user_id, reason)
+  select id, $1::uuid, 'rejected', $2, nullif($3, ''), nullif($4, '') from claim
+  returning id
+), aud as (
+  insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail)
+  select id, $5, 'approval', 'rejected', $6::jsonb from claim
+)
+select ${CARD_COLUMNS}
+  from claim join enquiries e on e.id = claim.id
+  join drafts d on d.id = $1::uuid
+  left join customers c on c.id = d.customer_id;`;
+
+const OUTCOME_SQL = `insert into audit_log (enquiry_id, workflow_execution_id, step, event, detail)
+values ($1::uuid, $2, 'approval', 'outcome', $3::jsonb) returning enquiry_id;`;
+
+const gmailBase = { resource: "message", emailType: "text", message: "={{ $json.plan.body }}" };
+const gmailOptions = { appendAttribution: false, senderName: business.name };
+
+const interactions = workflow(
+  WF.interactions,
+  [
+    {
+      name: "Slack interaction", type: "n8n-nodes-base.webhook", typeVersion: 2, position: [0, 300], webhookId: uuid("webhook/slack-interactions"),
+      // No header auth is possible for Slack: every request is verified by its signature in the next node.
+      parameters: { httpMethod: "POST", path: PATHS.slack, responseMode: "responseNode", options: { rawBody: true } },
+    },
+    codeNode("Verify signature + route", [220, 300], code("approval", `
+// Injected at deploy time; the committed workflow only contains the placeholder.
+const SIGNING_SECRET = "__SECRET__SLACK_SIGNING_SECRET";
+const item = $input.first();
+let raw;
+try {
+  raw = (await this.helpers.getBinaryDataBuffer(0, "data")).toString("utf8");
+} catch {
+  raw = item.binary?.data?.data ? Buffer.from(item.binary.data.data, "base64").toString("utf8") : "";
+}
+const h = item.json.headers ?? {};
+const check = verifySlackSignature({ rawBody: raw, timestamp: h["x-slack-request-timestamp"], signature: h["x-slack-signature"], secret: SIGNING_SECRET, nowSeconds: Math.floor(Date.now() / 1000) });
+if (!check.ok) return [{ json: { ok: false, reason: check.reason } }];
+let route;
+try { route = routeInteraction(parseInteraction(raw)); } catch (e) { route = { kind: "ignore", reason: e.message }; }
+return [{ json: { ok: true, route } }];`), "runOnceForAllItems"),
+    ifTrue("Genuine Slack request?", [440, 300], "$json.ok"),
+    respondNode("Reject request", [660, 480], { respondWith: "text", responseBody: "Unauthorised", options: { responseCode: 401 } }),
+    // Slack needs an answer within 3 seconds, and an empty 200 to close a modal on submit.
+    respondNode("Acknowledge Slack", [660, 220], { respondWith: "noData", options: { responseCode: 200 } }),
+    ifTrue("Approve or edited reply?", [880, 220], `["approve", "edit_submit"].includes($json.route.kind)`),
+
+    // --- send path
+    codeNode("Decision", [1100, 120], code(null, `
+const r = $json.route;
+return { json: { ...r, decision: r.kind === "edit_submit" ? "edited" : "approved", params: [r.draft_id] } };`)),
+    pgNode("Claim draft", [1320, 120], CLAIM_SQL),
+    codeNode("Plan email", [1540, 120], code("approval", `
+const ctx = $("Decision").first().json;
+const row = $json;
+const subject = ctx.decision === "edited" && ctx.subject ? ctx.subject : row.subject;
+const body = ctx.decision === "edited" ? ctx.body : row.draft_body;
+return [{ json: { ctx, row: { ...row, body: row.draft_body }, plan: emailPlan(row, subject, body), final_subject: subject, final_body: body } }];`), "runOnceForAllItems"),
+    ifTrue("Send by Gmail?", [1760, 120], `["reply", "send"].includes($json.plan.mode)`),
+    ifTrue("Reply in thread?", [1980, 40], `$json.plan.mode === "reply"`),
+    {
+      name: "Gmail: reply in thread", type: "n8n-nodes-base.gmail", typeVersion: 2.1, position: [2200, -40],
+      parameters: { ...gmailBase, operation: "reply", messageId: "={{ $json.plan.gmail_id }}", options: { ...gmailOptions, replyToSenderOnly: true } },
+      credentials: cred("gmailOAuth2", CRED.gmail), onError: "continueRegularOutput",
+    },
+    {
+      name: "Gmail: send new email", type: "n8n-nodes-base.gmail", typeVersion: 2.1, position: [2200, 120],
+      parameters: { ...gmailBase, operation: "send", sendTo: "={{ $json.plan.to }}", subject: "={{ $json.plan.subject }}", options: gmailOptions },
+      credentials: cred("gmailOAuth2", CRED.gmail), onError: "continueRegularOutput",
+    },
+    codeNode("After send", [2420, 120], code("approval", `
+const p = $("Plan email").first().json;
+const res = $input.first().json;
+let status, error = null, gmail_message_id = null;
+if (p.plan.mode === "simulated") status = "simulated";
+else if (p.plan.mode === "none") { status = "failed"; error = p.plan.error; }
+else if (res.error || !res.id) { status = "failed"; error = String(res.error?.message ?? res.error ?? "Gmail returned no message id"); }
+else { status = "sent"; gmail_message_id = res.id; }
+const ok = status !== "failed";
+const c = p.row.classification ?? {};
+const name = splitName(p.row.sender_name);
+const createJob = ok && JOB_CATEGORIES.includes(c.category);
+const detail = { decision: p.ctx.decision, by: p.ctx.user, send: { mode: p.plan.mode, status, error, gmail_message_id, to: p.plan.to }, edited: p.ctx.decision === "edited" };
+const params = [
+  p.row.enquiry_id, p.row.draft_id, p.ctx.decision, p.ctx.user.name, p.ctx.user.id ?? "", p.final_subject ?? "", p.final_body ?? "",
+  p.plan.mode, ok ? "sent" : "failed", String(ok), name.first, name.last, c.postcode ?? "", String(createJob),
+  (c.service_ids ?? [])[0] ?? "", c.summary ?? "", String($execution.id), ok ? (status === "simulated" ? "sent_simulated" : "sent") : "send_failed", JSON.stringify(detail),
+];
+return [{ json: { ...p, send: { status, error, gmail_message_id }, ok, params } }];`), "runOnceForAllItems"),
+    pgNode("Record decision", [2640, 120], RECORD_SQL),
+    codeNode("Plan holds", [2860, 120], code("approval", `
+const p = $("After send").first().json;
+const rec = $input.first().json;
+const events = p.ok && JOB_CATEGORIES.includes(p.row.classification?.category) ? holdEvents(p.row.proposed_slot, p.row) : [];
+const base = { p, rec };
+if (!events.length) return [{ json: { ...base, holds_planned: 0, event: null } }];
+const url = \`https://www.googleapis.com/calendar/v3/calendars/\${encodeURIComponent(CALENDAR_ID)}/events\`;
+return events.map((event) => ({ json: { ...base, holds_planned: events.length, event, url } }));`), "runOnceForAllItems"),
+    ifTrue("Any holds?", [3080, 120], "$json.event !== null"),
+    {
+      name: "Calendar: tentative hold", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [3300, 40],
+      parameters: {
+        method: "POST", url: "={{ $json.url }}",
+        authentication: "predefinedCredentialType", nodeCredentialType: "googleCalendarOAuth2Api",
+        sendBody: true, specifyBody: "json", jsonBody: "={{ JSON.stringify($json.event) }}", options: { timeout: 20000 },
+      },
+      credentials: cred("googleCalendarOAuth2Api", CRED.calendar),
+      retryOnFail: true, maxTries: 2, waitBetweenTries: 1000, onError: "continueRegularOutput",
+    },
+    codeNode("Collect holds", [3520, 40], code(null, `
+const items = $input.all().map((i) => i.json);
+const base = $("Plan holds").first().json;
+const ok = items.filter((i) => i.id && !i.error);
+return [{ json: { p: base.p, rec: base.rec, holds_ok: ok.length, holds_failed: items.length - ok.length, hold_ids: ok.map((i) => i.id) } }];`), "runOnceForAllItems"),
+    codeNode("Outcome card", [3740, 120], code("approval", `
+const { p, rec } = $json;
+const row = p.row;
+const outcome = {
+  status: p.send.status, by: p.ctx.user.name, edited: p.ctx.decision === "edited", final_body: p.final_body, error: p.send.error,
+  holds: $json.holds_ok ?? 0, customer_created: Boolean(rec.new_customer_id), job_created: Boolean(rec.job_id),
+};
+const update = row.slack_channel && row.slack_ts ? outcomeCard(row.slack_channel, row.slack_ts, approvalCard(row.slack_channel, row), outcome) : null;
+const detail = { outcome, holds_failed: $json.holds_failed ?? 0, hold_ids: $json.hold_ids ?? [], customer_id: rec.customer_id, job_id: rec.job_id };
+return [{ json: { update, outcome, params: [row.enquiry_id, String($execution.id), JSON.stringify(detail)] } }];`), "runOnceForAllItems"),
+    pgNode("Log outcome", [3960, 120], OUTCOME_SQL),
+    ifTrue("Card to update?", [4180, 120], `$("Outcome card").first().json.update !== null`),
+    slackApiNode("Slack: update card", [4400, 120], "chat.update", `={{ JSON.stringify($("Outcome card").first().json.update) }}`),
+
+    // --- edit and reject modals
+    ifTrue("Open edit?", [1100, 420], `$json.route.kind === "edit_open"`),
+    ifTrue("Draft text in button?", [1320, 380], "$json.route.body !== null && $json.route.body !== undefined"),
+    codeNode("Edit modal", [1540, 320], code("approval", `
+const r = $json.route;
+return { json: { trigger_id: r.trigger_id, view: editModal(r.draft_id, r.channel, r.ts, r.subject, r.body) } };`)),
+    pgNode("Load draft text", [1540, 480], `select subject, body from drafts where id = $1::uuid;`, "={{ [$json.route.draft_id] }}"),
+    codeNode("Edit modal (long draft)", [1760, 480], code("approval", `
+const r = $("Acknowledge Slack").first().json.route;
+return { json: { trigger_id: r.trigger_id, view: editModal(r.draft_id, r.channel, r.ts, $json.subject, $json.body) } };`)),
+    ifTrue("Open reject?", [1320, 640], `$json.route.kind === "reject_open"`),
+    codeNode("Reject modal", [1540, 640], code("approval", `
+const r = $json.route;
+return { json: { trigger_id: r.trigger_id, view: rejectModal(r.draft_id, r.channel, r.ts) } };`)),
+    slackApiNode("Slack: open modal", [1980, 480], "views.open", "={{ JSON.stringify({ trigger_id: $json.trigger_id, view: $json.view }) }}"),
+
+    // --- reject path
+    ifTrue("Reject submitted?", [1540, 800], `$json.route.kind === "reject_submit"`),
+    codeNode("Reject decision", [1760, 800], code(null, `
+const r = $json.route;
+const detail = { decision: "rejected", by: r.user, reason: r.reason || null };
+return { json: { route: r, params: [r.draft_id, r.user.name, r.user.id ?? "", r.reason ?? "", String($execution.id), JSON.stringify(detail)] } };`)),
+    pgNode("Record rejection", [1980, 800], REJECT_SQL),
+    codeNode("Rejected card", [2200, 800], code("approval", `
+const r = $("Reject decision").item.json.route;
+const row = { ...$json, body: $json.draft_body };
+const outcome = { status: "rejected", by: r.user.name, reason: r.reason };
+return { json: { update: row.slack_channel && row.slack_ts ? outcomeCard(row.slack_channel, row.slack_ts, approvalCard(row.slack_channel, row), outcome) : null } };`)),
+    slackApiNode("Slack: mark rejected", [2420, 800], "chat.update", "={{ JSON.stringify($json.update) }}"),
+  ],
+  [
+    ["Slack interaction", "Verify signature + route"],
+    ["Verify signature + route", "Genuine Slack request?"],
+    ["Genuine Slack request?", "Acknowledge Slack", 0],
+    ["Genuine Slack request?", "Reject request", 1],
+    ["Acknowledge Slack", "Approve or edited reply?"],
+    ["Approve or edited reply?", "Decision", 0],
+    ["Approve or edited reply?", "Open edit?", 1],
+    ["Decision", "Claim draft"],
+    ["Claim draft", "Plan email"],
+    ["Plan email", "Send by Gmail?"],
+    ["Send by Gmail?", "Reply in thread?", 0],
+    ["Send by Gmail?", "After send", 1],
+    ["Reply in thread?", "Gmail: reply in thread", 0],
+    ["Reply in thread?", "Gmail: send new email", 1],
+    ["Gmail: reply in thread", "After send"],
+    ["Gmail: send new email", "After send"],
+    ["After send", "Record decision"],
+    ["Record decision", "Plan holds"],
+    ["Plan holds", "Any holds?"],
+    ["Any holds?", "Calendar: tentative hold", 0],
+    ["Any holds?", "Outcome card", 1],
+    ["Calendar: tentative hold", "Collect holds"],
+    ["Collect holds", "Outcome card"],
+    ["Outcome card", "Log outcome"],
+    ["Log outcome", "Card to update?"],
+    ["Card to update?", "Slack: update card", 0],
+    ["Open edit?", "Draft text in button?", 0],
+    ["Open edit?", "Open reject?", 1],
+    ["Draft text in button?", "Edit modal", 0],
+    ["Draft text in button?", "Load draft text", 1],
+    ["Edit modal", "Slack: open modal"],
+    ["Load draft text", "Edit modal (long draft)"],
+    ["Edit modal (long draft)", "Slack: open modal"],
+    ["Open reject?", "Reject modal", 0],
+    ["Open reject?", "Reject submitted?", 1],
+    ["Reject modal", "Slack: open modal"],
+    ["Reject submitted?", "Reject decision", 0],
+    ["Reject decision", "Record rejection"],
+    ["Record rejection", "Rejected card"],
+    ["Rejected card", "Slack: mark rejected"],
+  ],
+);
+
+// ---------------------------------------------------------------------------------------------
+// 5. Intake: web form + Gmail
 
 const intake = workflow(
   WF.intake,
@@ -529,16 +882,19 @@ const intake = workflow(
     codeNode("Normalise form", [240, 0], code("normalise", `return { json: fromForm($json, String($execution.id)) };`)),
     callClassify("Classify (form)", [480, 0]),
     callDraft("Draft reply (form)", [720, 0]),
+    callApproval("Post for approval (form)", [960, 0]),
     {
       name: "New email in inbox", type: "n8n-nodes-base.gmailTrigger", typeVersion: 1.3, position: [0, 260],
-      parameters: { pollTimes: { item: [{ mode: "everyMinute" }] }, simple: false, filters: { readStatus: "unread", q: "in:inbox", includeSpamTrash: false }, options: {} },
+      // -from:me: replies we send from this mailbox must never come back in as new enquiries (no loops).
+      parameters: { pollTimes: { item: [{ mode: "everyMinute" }] }, simple: false, filters: { readStatus: "unread", q: "in:inbox -from:me", includeSpamTrash: false }, options: {} },
       credentials: cred("gmailOAuth2", CRED.gmail),
     },
     codeNode("Normalise email", [240, 260], code("normalise", `return { json: fromGmail($json) };`)),
     callClassify("Classify (email)", [480, 260]),
     callDraft("Draft reply (email)", [720, 260]),
+    callApproval("Post for approval (email)", [960, 260]),
     {
-      name: "Mark email as read", type: "n8n-nodes-base.gmail", typeVersion: 2.1, position: [960, 260],
+      name: "Mark email as read", type: "n8n-nodes-base.gmail", typeVersion: 2.1, position: [1200, 260],
       parameters: { resource: "message", operation: "markAsRead", messageId: `={{ $("Normalise email").item.json.gmail_id }}` },
       credentials: cred("gmailOAuth2", CRED.gmail),
     },
@@ -547,15 +903,17 @@ const intake = workflow(
     ["Web form", "Normalise form"],
     ["Normalise form", "Classify (form)"],
     ["Classify (form)", "Draft reply (form)"],
+    ["Draft reply (form)", "Post for approval (form)"],
     ["New email in inbox", "Normalise email"],
     ["Normalise email", "Classify (email)"],
     ["Classify (email)", "Draft reply (email)"],
-    ["Draft reply (email)", "Mark email as read"],
+    ["Draft reply (email)", "Post for approval (email)"],
+    ["Post for approval (email)", "Mark email as read"],
   ],
 );
 
 // ---------------------------------------------------------------------------------------------
-// 4. Test intake: protected webhook used by the evaluation script
+// 6. Test intake: protected webhook used by the evaluation script (never posts to Slack or sends)
 
 const testIntake = workflow(
   WF.testIntake,
@@ -595,6 +953,8 @@ export const WORKFLOWS = [
   // n8n 2.x only lets a workflow call published (active) sub-workflows, so Classify is activated first.
   { file: "classify.json", workflow: classify, activate: true },
   { file: "draft.json", workflow: draft, activate: true },
+  { file: "approval.json", workflow: approval, activate: true },
+  { file: "interactions.json", workflow: interactions, activate: true },
   { file: "intake.json", workflow: intake, activate: true },
   { file: "test-intake.json", workflow: testIntake, activate: true },
 ];

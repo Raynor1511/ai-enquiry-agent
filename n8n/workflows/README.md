@@ -1,20 +1,20 @@
 # n8n workflows
 
-These JSON files are **generated** by `n8n/build.mjs` from the source in `n8n/src/`. Don't edit them by hand.
-
-- **Credentials:** referenced by name only, with placeholder ids. `n8n/deploy.mjs` resolves them per instance, so no credential ids or secrets are ever committed.
-- **Importing by hand:** the files import into any n8n 2.x instance. Create credentials with the same names, then fix the references in the editor.
+These JSON files are **generated** by `n8n/build.mjs` from the source in `n8n/src/`; don't edit them by hand. Credentials are referenced by name with placeholder ids, and instance values (Slack channel ids, calendar id, the Slack signing secret) are `__ENV__` / `__SECRET__` placeholders; `n8n/deploy.mjs` fills them in memory when deploying, so no ids or secrets are ever committed.
 
 | Workflow | File | What it does |
 | --- | --- | --- |
-| Harbourline · Classify enquiry | `classify.json` | Sub-workflow. Inserts the enquiry (skipping duplicate message ids), classifies it with Claude Haiku 5.5 using structured output, retries invalid output once, applies safety rules, then saves the classification and an audit log entry |
-| Harbourline · Intake (form + Gmail) | `intake.json` | The public web form and the Gmail inbox (checked every minute). Each source is normalised and then classified; handled emails are marked as read |
-| Harbourline · Test intake (eval) | `test-intake.json` | Header-protected webhook that `eval/run-intake.mjs` uses. It returns the classification in the response |
+| Harbourline · Intake (form + Gmail) | `intake.json` | Public web form and the Gmail inbox (every minute, excluding the mailbox's own messages) → normalise → Classify → Draft → Post for approval; handled emails are marked read |
+| Harbourline · Classify enquiry | `classify.json` | Sub-workflow: insert (skipping duplicate message ids), classify with Claude Haiku 5.5 (structured output), retry once, safety rules, save + audit |
+| Harbourline · Draft reply | `draft.json` | Sub-workflow: emergency alert to #alerts, Claude Sonnet 5.5 tool loop over the MCP server (up to 6 visible turns), price and contact checks, save + audit |
+| Harbourline · Post for approval | `approval.json` | Sub-workflow: approval card in #enquiries (or "manual reply needed"), status `awaiting_approval` |
+| Harbourline · Slack interactions | `interactions.json` | Public webhook for Slack buttons and modals: signature check, Approve / Edit / Reject, Gmail reply or send, approval / customer / job records, tentative calendar holds, card outcome |
+| Harbourline · Test intake (eval) | `test-intake.json` | Header-protected webhook for `eval/run-intake.mjs`: Classify + Draft, result in the response; never posts to Slack or sends email |
 
 ```bash
-node --test n8n/test/      # unit tests for the pipeline logic inlined into Code nodes
+node --test n8n/test/      # unit tests for the logic inlined into Code nodes
 node n8n/build.mjs         # regenerate these files
 node n8n/deploy.mjs        # build + create/update + activate in n8n (needs N8N_API_KEY)
 ```
 
-Planned next: drafting (Phase 3), Slack approval (Phase 4), error handler (Phase 5).
+To import by hand into another n8n 2.x instance: create credentials with the same names, import the files, then replace the placeholders (channel ids, calendar id, signing secret) in the nodes that use them.
