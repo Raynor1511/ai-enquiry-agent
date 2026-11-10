@@ -120,6 +120,27 @@
       }
     },
     {
+      "id": "a1f85347-1893-4cc1-a167-645b27047073",
+      "name": "Draft reply (form)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW__Harbourline · Draft reply",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
       "id": "f970f935-1a58-4856-a053-2a00c4096aeb",
       "name": "New email in inbox",
       "type": "n8n-nodes-base.gmailTrigger",
@@ -188,12 +209,33 @@
       }
     },
     {
+      "id": "2f852423-87f1-4a62-af64-818b04e71a56",
+      "name": "Draft reply (email)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        260
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW__Harbourline · Draft reply",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
       "id": "9c97c8ed-ecff-4c6b-ae2c-3897d36bd131",
       "name": "Mark email as read",
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.1,
       "position": [
-        720,
+        960,
         260
       ],
       "parameters": {
@@ -232,6 +274,17 @@
         ]
       ]
     },
+    "Classify (form)": {
+      "main": [
+        [
+          {
+            "node": "Draft reply (form)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "New email in inbox": {
       "main": [
         [
@@ -255,6 +308,17 @@
       ]
     },
     "Classify (email)": {
+      "main": [
+        [
+          {
+            "node": "Draft reply (email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft reply (email)": {
       "main": [
         [
           {

@@ -62,17 +62,87 @@
       }
     },
     {
-      "id": "97920ee6-2f0f-4086-a6e9-dcd158bc1cce",
-      "name": "Return result",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+      "id": "c12f135d-d422-4c00-a303-cef0a634c685",
+      "name": "Draft too?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
       "position": [
         720,
         0
       ],
       "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0602d4d7-7b25-4e47-a7fa-9011ec784f96",
+              "leftValue": "={{ !$(\"Test enquiry webhook\").item.json.body.skip_draft }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "f7bb5727-d8cb-41de-a4e6-0b10be7bea9f",
+      "name": "Return classification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        160
+      ],
+      "parameters": {
         "respondWith": "json",
         "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "fd52dcb9-be87-4e5d-a6da-4771ca9f2175",
+      "name": "Draft reply (test)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        -120
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "__WORKFLOW__Harbourline · Draft reply",
+          "mode": "id"
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "id": "97920ee6-2f0f-4086-a6e9-dcd158bc1cce",
+      "name": "Return result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -120
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ...$(\"Classify (test)\").item.json, draft: $json }) }}",
         "options": {}
       }
     }
@@ -101,6 +171,35 @@
       ]
     },
     "Classify (test)": {
+      "main": [
+        [
+          {
+            "node": "Draft too?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft too?": {
+      "main": [
+        [
+          {
+            "node": "Draft reply (test)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft reply (test)": {
       "main": [
         [
           {

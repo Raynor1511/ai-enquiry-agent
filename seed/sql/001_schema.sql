@@ -154,6 +154,11 @@ create table if not exists drafts (
   created_at      timestamptz not null default now(),
   unique (enquiry_id, version)
 );
+-- Added in Phase 3 (safe to re-run on existing databases).
+alter table drafts add column if not exists subject text;
+alter table drafts add column if not exists needs_review boolean not null default false;
+alter table drafts add column if not exists review_reason text;
+alter table drafts add column if not exists customer_id text references customers (id) on delete set null;
 
 create table if not exists approvals (
   id          uuid primary key default gen_random_uuid(),
