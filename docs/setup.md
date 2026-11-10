@@ -119,3 +119,16 @@ docker compose up -d --build
 The ngrok traffic policy (`infra/ngrok-policy.yml`) passes only `/webhook*` and `/form*` paths to n8n. Everything else, including the editor, login, REST API and the evaluation webhook (which `eval/run-intake.mjs` calls on localhost), gets an empty 404 from ngrok. It also rate-limits: 120 requests a minute per client IP, and form submissions (each one costs a Claude call) to 5 per 10 minutes per IP and 20 an hour in total; over a limit, ngrok answers `429 Too Many Requests` and n8n never sees the request. After editing the policy, run `docker compose restart ngrok`. People opening the address in a browser see ngrok's free-plan warning page once; Slack and other server-to-server calls don't.
 
 Stop with `docker compose down`. n8n's data lives in the `harbourline_n8n_data` volume and survives restarts; `down -v` deletes it.
+
+## 6. Clearing test data
+
+Evaluation runs leave test enquiries (`is_test = true`) in the database. To remove them, and optionally everything from real use as well:
+
+```bash
+node scripts/clear-test-data.mjs                         # dry run: counts of what would be deleted
+node scripts/clear-test-data.mjs --apply                 # delete evaluation enquiries and synthetic leftovers
+node scripts/clear-test-data.mjs --live --apply          # also real enquiries, their customers, jobs, holds and cards
+node scripts/clear-test-data.mjs --live --older-than 90 --apply   # retention: only enquiries older than 90 days
+```
+
+The dry run does the same deletes inside a transaction and rolls it back, so its counts are exact. Seed data (services, policies, the demo customers and their history) is never touched. It prints counts only. Emails in the demo mailbox and Slack messages other than approval cards are not removed; see [data protection](data-protection.md).

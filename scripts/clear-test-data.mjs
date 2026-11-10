@@ -1,0 +1,135 @@
+#!/usr/bin/env node
+// Deletes test data, and optionally real enquiry data, from Supabase (and the matching calendar holds
+// and Slack approval cards). Prints counts only, never personal data.
+//
+//   node scripts/clear-test-data.mjs                     dry run: what would go (nothing is deleted)
+//   node scripts/clear-test-data.mjs --apply             delete evaluation enquiries (is_test) and
+//                                                        synthetic leftovers from dev checks
+//   ... --live                                           also real enquiries: their drafts, approvals,
+//                                                        audit rows, jobs, the customers created from
+//                                                        them, their tentative calendar holds and their
+//                                                        Slack approval cards
+//   ... --older-than 90                                  only enquiries received more than 90 days ago
+//                                                        (with --live: a retention clean-up)
+//
+// Seed data (services, policies, the 30 demo customers and their job history) is never touched.
+// The dry run performs the same deletes inside a transaction and rolls it back, so its counts
+// (including cascades) are exactly what --apply would remove.
+// Not covered: emails in the demo Gmail mailbox and Slack messages other than approval cards
+// (alerts, thread replies): remove those by hand (see docs/data-protection.md).
+// Uses the admin connection (SUPABASE_DB_URL): n8n's own role cannot delete anything, by design.
+import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { ROOT, readEnv } from "./lib/dotenv.mjs";
+
+const args = process.argv.slice(2);
+const apply = args.includes("--apply");
+const live = args.includes("--live");
+const olderIdx = args.indexOf("--older-than");
+const olderThan = olderIdx >= 0 ? Number(args[olderIdx + 1]) : null;
+if (olderIdx >= 0 && !(Number.isInteger(olderThan) && olderThan >= 0)) {
+  console.error("--older-than needs a whole number of days");
+  process.exit(1);
+}
+const unknown = args.filter((a, i) => !["--apply", "--live", "--older-than"].includes(a) && !(olderIdx >= 0 && i === olderIdx + 1));
+if (unknown.length) {
+  console.error(`Unknown option(s): ${unknown.join(" ")}. See the comment at the top of this file.`);
+  process.exit(1);
+}
+
+const env = readEnv();
+if (!env.SUPABASE_DB_URL) {
+  console.error("SUPABASE_DB_URL is empty in .env");
+  process.exit(1);
+}
+const pg = createRequire(path.join(ROOT, "mcp-server", "package.json"))("pg");
+const db = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: /localhost|127\.0\.0\.1/.test(env.SUPABASE_DB_URL) ? false : { rejectUnauthorized: false } });
+await db.connect();
+
+console.log(`Scope: ${live ? "all enquiries (test and real)" : "evaluation enquiries and synthetic leftovers"}${olderThan !== null ? `, received more than ${olderThan} day(s) ago` : ""}`);
+console.log(apply ? "Deleting." : "Dry run: nothing will be deleted. Add --apply to delete.");
+
+const counts = {};
+let holds = [];
+let cards = [];
+try {
+  await db.query("begin");
+  // The enquiries in scope, kept in a temporary table for the rest of the transaction.
+  await db.query(`create temporary table doomed on commit drop as
+    select id, message_id, is_test from enquiries
+     where ($1::boolean or is_test or message_id like 'synthetic:%' or message_id like 'rolecheck:%')
+       and ($2::int is null or received_at < now() - make_interval(days => $2::int))`, [live, olderThan]);
+  const n = async (sql) => Number((await db.query(sql)).rows[0].n);
+  counts.enquiries_test = await n(`select count(*) n from doomed where is_test`);
+  counts.enquiries_real = await n(`select count(*) n from doomed where not is_test`);
+  // Approval cards to delete from Slack, before the drafts go.
+  cards = (await db.query(`select distinct slack_channel, slack_ts from drafts where enquiry_id in (select id from doomed) and slack_ts is not null`)).rows;
+  // Customers that exist only because one of these enquiries was approved (never seed customers).
+  await db.query(`create temporary table doomed_customers on commit drop as
+    select c.id from customers c
+     where c.notes like 'Created from approved enquiry %'
+       and substr(c.notes, length('Created from approved enquiry ') + 1) in (select message_id from doomed)`);
+  counts.audit_rows = (await db.query(`delete from audit_log where enquiry_id in (select id from doomed)`)).rowCount;
+  counts.jobs = (await db.query(`delete from jobs where source_enquiry_id in (select id from doomed) or customer_id in (select id from doomed_customers)`)).rowCount;
+  counts.approvals = (await db.query(`delete from approvals where enquiry_id in (select id from doomed)`)).rowCount;
+  counts.drafts = (await db.query(`delete from drafts where enquiry_id in (select id from doomed)`)).rowCount;
+  const enq = (await db.query(`delete from enquiries where id in (select id from doomed)`)).rowCount;
+  counts.customers_created_from_enquiries = (await db.query(`delete from customers where id in (select id from doomed_customers)`)).rowCount;
+  if (enq !== counts.enquiries_test + counts.enquiries_real) throw new Error("enquiry count changed during the run; nothing was deleted");
+  // Enquiries left after the deletes (whether or not they are committed): a hold whose enquiry isn't
+  // among them belongs to a deleted enquiry or to one that is already gone.
+  const remainingIds = new Set((await db.query(`select id from enquiries`)).rows.map((r) => r.id));
+  await db.query(apply ? "commit" : "rollback");
+
+  // Calendar holds for these enquiries (and holds whose enquiry no longer exists), real scope only:
+  // test enquiries are never approved, so they never have holds.
+  if (live && env.GOOGLE_CALENDAR_ID && env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE) {
+    const authFile = path.join(ROOT, "mcp-server", "dist", "calendar", "googleAuth.js");
+    if (!existsSync(authFile)) {
+      console.log("  (calendar holds skipped: build the MCP server first with  cd mcp-server && npm run build)");
+    } else {
+      const { CALENDAR_EVENTS, loadServiceAccountKey, ServiceAccountTokenSource } = await import(pathToFileURL(authFile).href);
+      const tokens = new ServiceAccountTokenSource(await loadServiceAccountKey(env.GOOGLE_SERVICE_ACCOUNT_KEY_FILE), CALENDAR_EVENTS);
+      const base = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(env.GOOGLE_CALENDAR_ID)}/events`;
+      const now = Date.now();
+      let pageToken = "";
+      do {
+        const q = new URLSearchParams({ singleEvents: "true", maxResults: "2500", timeMin: new Date(now - 400 * 86400000).toISOString(), timeMax: new Date(now + 400 * 86400000).toISOString() });
+        if (pageToken) q.set("pageToken", pageToken);
+        const r = await fetch(`${base}?${q}`, { headers: { authorization: `Bearer ${await tokens.token()}` } });
+        if (!r.ok) throw new Error(`calendar list failed: HTTP ${r.status}`);
+        const page = await r.json();
+        for (const ev of page.items ?? []) {
+          const tag = ev.extendedProperties?.private?.harbourlineHold;
+          if (tag && !remainingIds.has(tag)) holds.push(ev.id);
+        }
+        pageToken = page.nextPageToken ?? "";
+      } while (pageToken);
+      if (apply) {
+        for (const id of holds) await fetch(`${base}/${encodeURIComponent(id)}?sendUpdates=none`, { method: "DELETE", headers: { authorization: `Bearer ${await tokens.token()}` } });
+      }
+    }
+  }
+  if (apply && cards.length && env.SLACK_BOT_TOKEN) {
+    let deleted = 0;
+    for (const c of cards) {
+      const r = await (await fetch("https://slack.com/api/chat.delete", { method: "POST", headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, "content-type": "application/json; charset=utf-8" }, body: JSON.stringify({ channel: c.slack_channel, ts: c.slack_ts }) })).json();
+      if (r.ok || r.error === "message_not_found") deleted++;
+    }
+    counts.slack_cards_deleted = deleted;
+  }
+} catch (err) {
+  await db.query("rollback").catch(() => {});
+  await db.end();
+  console.error(`  ✗ ${err.message}`);
+  process.exit(1);
+}
+await db.end();
+
+const verb = apply ? "deleted" : "would delete";
+console.log(`  enquiries ${verb}: ${counts.enquiries_test + counts.enquiries_real} (evaluation/synthetic ${counts.enquiries_test}, real ${counts.enquiries_real})`);
+console.log(`  drafts ${counts.drafts} · approvals ${counts.approvals} · audit rows ${counts.audit_rows} · jobs ${counts.jobs} · customers created from enquiries ${counts.customers_created_from_enquiries}`);
+if (live) console.log(`  calendar holds: ${holds.length} · Slack approval cards: ${cards.length}${apply && counts.slack_cards_deleted !== undefined ? ` (${counts.slack_cards_deleted} removed)` : ""}`);
+if (live) console.log("  Not touched: emails in the demo Gmail mailbox, Slack alerts and thread replies (remove by hand).");

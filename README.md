@@ -48,7 +48,7 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | [`seed/sql/`](seed/sql) | Postgres/Supabase schema, generated seed data, read-only role ([docs](docs/data-model.md)) |
 | [`eval/test-set/`](eval/test-set) | 40 labelled test enquiries, including emergencies, complaints, spam and 3 prompt-injection attempts ([docs](eval/README.md)) |
 | [`n8n/`](n8n) | Pipeline logic (`src/`, unit-tested in `test/`), generated n8n workflows (`workflows/`, credentials stripped), build and deploy scripts |
-| [`scripts/`](scripts) | `.env` setup, database setup, seed SQL generator, test-set validator |
+| [`scripts/`](scripts) | `.env` setup, database setup (roles proven query by query), n8n credentials, seed SQL generator, test-set validator, test-data cleanup |
 | [`docker-compose.yml`](docker-compose.yml), [`infra/`](infra) | Local stack: n8n, MCP server, and an ngrok tunnel that only exposes webhooks and the form, with rate limits ([setup](docs/setup.md)) |
 
 ## Try the MCP server
