@@ -100,6 +100,27 @@ const rows = enquiries.map((e) => {
     duration_ms: c.duration_ms ?? null,
     wall_ms: r.wall_ms,
     attempts: c.attempts ?? null,
+    draft: c.draft
+      ? {
+          status: c.draft.status,
+          drafted: Boolean(c.draft.draft),
+          prices_ok: c.draft.checks?.prices?.ok ?? null,
+          unsupported: c.draft.checks?.prices?.unsupported ?? [],
+          contacts_ok: c.draft.checks?.contacts?.ok ?? null,
+          needs_review: Boolean(c.draft.needs_review),
+          review_reasons: c.draft.review_reasons ?? [],
+          customer_id: c.draft.customer_id ?? null,
+          customer_ok: (c.draft.customer_id ?? null) === (L.expected_customer_id ?? null),
+          tools: c.draft.tools_used ?? [],
+          turns: c.draft.turns ?? null,
+          cost_usd: c.draft.cost_usd ?? null,
+          duration_ms: c.draft.duration_ms ?? null,
+          error: c.draft.error ?? null,
+          subject: c.draft.draft?.subject ?? null,
+          body: c.draft.draft?.body ?? null,
+          reasoning: c.draft.draft?.reasoning ?? null,
+        }
+      : null,
   };
 });
 
@@ -132,6 +153,39 @@ const matrix = [
 ];
 
 const misses = rows.filter((r) => !r.category_ok || !r.urgency_ok || r.expected.injection !== r.got.injection || !r.ok);
+
+// Drafting (present when the run wasn't classification-only)
+const withDraft = rows.filter((r) => r.draft);
+const shouldDraft = rows.filter((r) => enquiries.find((e) => e.id === r.id).labels.should_reply);
+const drafted = withDraft.filter((r) => r.draft.drafted);
+const dCosts = withDraft.map((r) => r.draft.cost_usd).filter((x) => typeof x === "number");
+const dTimes = withDraft.map((r) => r.draft.duration_ms).filter((x) => typeof x === "number").sort((a, b) => a - b);
+const draftSection = withDraft.length
+  ? [
+      "## Drafting",
+      "",
+      "| Measure | Result |",
+      "|---|---|",
+      `| Drafts produced (of enquiries that need a reply) | ${count((r) => r.draft?.drafted && shouldDraft.includes(r))}/${shouldDraft.length} |`,
+      `| Spam correctly not drafted | ${count((r) => !enquiries.find((e) => e.id === r.id).labels.should_reply && !r.draft?.drafted)}/${n - shouldDraft.length} |`,
+      `| Drafting failures | ${count((r) => r.draft && !r.draft.drafted && r.draft.status !== "skipped")} |`,
+      `| Price check passed | ${count((r) => r.draft?.prices_ok === true)}/${drafted.length} |`,
+      `| Contact check passed | ${count((r) => r.draft?.contacts_ok === true)}/${drafted.length} |`,
+      `| Verified customer matches the label | ${count((r) => r.draft?.drafted && r.draft.customer_ok)}/${drafted.length} |`,
+      `| Flagged for human review | ${count((r) => r.draft?.drafted && r.draft.needs_review)}/${drafted.length} |`,
+      `| Turns (average) | ${avg(drafted.map((r) => r.draft.turns ?? 0)).toFixed(1)} |`,
+      `| Draft cost | avg $${avg(dCosts).toFixed(4)} · total $${dCosts.reduce((a, b) => a + b, 0).toFixed(3)} |`,
+      `| Draft time | avg ${(avg(dTimes) / 1000).toFixed(1)} s · p90 ${(p90(dTimes) / 1000).toFixed(1)} s |`,
+      "",
+      "| id | category | draft | prices | contacts | customer (got/expected) | review reasons |",
+      "|---|---|---|---|---|---|---|",
+      ...withDraft.map((r) => {
+        const L = enquiries.find((e) => e.id === r.id).labels;
+        return `| ${r.id} | ${r.got.category} | ${r.draft.status}${r.draft.error ? ` (${r.draft.error})` : ""} | ${r.draft.prices_ok ?? "-"}${r.draft.unsupported.length ? ` £${r.draft.unsupported.join(",£")}` : ""} | ${r.draft.contacts_ok ?? "-"} | ${r.draft.customer_id ?? "-"}/${L.expected_customer_id ?? "-"} | ${r.draft.review_reasons.join("; ").replace(/\|/g, "/").slice(0, 120)} |`;
+      }),
+      "",
+    ]
+  : [];
 const summary = [
   `# Intake evaluation: ${runId}`,
   "",
@@ -161,11 +215,43 @@ const summary = [
   misses.length ? "| id | expected | got | injection exp/got | note |\n|---|---|---|---|---|" : "None.",
   ...misses.map((r) => `| ${r.id} | ${r.expected.category}/${r.expected.urgency} | ${r.got.category ?? "-"}/${r.got.urgency ?? "-"} | ${r.expected.injection}/${r.got.injection} | ${(r.error ?? r.summary ?? "").replace(/\|/g, "/").slice(0, 90)} |`),
   "",
+  ...draftSection,
 ].join("\n");
+
+// Every draft in one readable file, next to the enquiry and its labels, for human review.
+const draftsMd = withDraft.length
+  ? [
+      `# Drafts: ${runId}`,
+      "",
+      ...withDraft.flatMap((r) => {
+        const e = enquiries.find((x) => x.id === r.id);
+        return [
+          `## ${r.id} · ${r.got.category}/${r.got.urgency} · ${r.draft.status}`,
+          "",
+          `**Enquiry** (${e.source}, from ${e.sender.name}): ${e.subject ?? ""}`,
+          "",
+          "> " + String(e.body).replace(/\n/g, "\n> "),
+          "",
+          `**Must include:** ${e.labels.required_facts.join("; ") || "-"}`,
+          "",
+          `**Must not:** ${e.labels.forbidden_facts.join("; ") || "-"}`,
+          "",
+          `**Draft** (${r.draft.turns} turns, ${r.draft.tools.join(", ")}; $${r.draft.cost_usd}; checks: prices ${r.draft.prices_ok}, contacts ${r.draft.contacts_ok})`,
+          "",
+          r.draft.body ? "```text\nSubject: " + r.draft.subject + "\n\n" + r.draft.body + "\n```" : `_No draft: ${r.draft.error ?? r.draft.status}_`,
+          "",
+          `**Reviewer notes:** ${r.draft.reasoning ?? "-"}`,
+          "",
+          r.draft.review_reasons.length ? `**Flagged:** ${r.draft.review_reasons.join("; ")}\n` : "",
+        ];
+      }),
+    ].join("\n")
+  : null;
 
 const outDir = path.join(here, "runs", runId);
 mkdirSync(outDir, { recursive: true });
 writeFileSync(path.join(outDir, "results.json"), JSON.stringify({ run_id: runId, rows, raw: results }, null, 2));
 writeFileSync(path.join(outDir, "summary.md"), summary);
+if (draftsMd) writeFileSync(path.join(outDir, "drafts.md"), draftsMd);
 console.log("\n" + summary);
 console.log(`Saved eval/runs/${runId}/`);

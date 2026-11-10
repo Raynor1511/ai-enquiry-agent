@@ -155,10 +155,18 @@ export function mcpCallBody(call, n) {
   return { jsonrpc: "2.0", id: n, method: "tools/call", params: { name: call.name, arguments: call.input ?? {} } };
 }
 
-/** MCP tools/call responses (same order as the calls) -> one user message of tool_result blocks. */
+export const TURN_REMINDER =
+  "If you now have what you need, write the final answer. Don't repeat a lookup you've already made: its result is above.";
+
+/**
+ * MCP tools/call responses (same order as the calls) -> one user message of tool_result blocks,
+ * followed by a short reminder (a text block after the results, as the API allows), so the model
+ * answers once it has the facts instead of re-checking them.
+ */
 export function addToolResults(state, calls, mcpResponses) {
   const blocks = [];
   const log = [];
+  const seen = new Set(state.tool_log.map((t) => `${t.name}:${JSON.stringify(t.input ?? {})}`));
   calls.forEach((call, i) => {
     const r = mcpResponses[i] ?? {};
     let text;
@@ -170,10 +178,13 @@ export function addToolResults(state, calls, mcpResponses) {
       text = `Tool call failed: ${r.error?.message ?? r.message ?? "no response from the MCP server"}`;
       isError = true;
     }
-    blocks.push({ type: "tool_result", tool_use_id: call.id, content: text || "(empty)", ...(isError ? { is_error: true } : {}) });
-    log.push({ name: call.name, input: call.input, is_error: isError, output: text });
+    const repeat = seen.has(`${call.name}:${JSON.stringify(call.input ?? {})}`);
+    const content = (repeat ? "(You already made this exact call earlier; the result is the same.)\n" : "") + (text || "(empty)");
+    blocks.push({ type: "tool_result", tool_use_id: call.id, content, ...(isError ? { is_error: true } : {}) });
+    log.push({ name: call.name, input: call.input, is_error: isError, repeat, output: text });
   });
-  // All results go back in a single user message (parallel tool use).
+  // All results go back in a single user message (parallel tool use), then the reminder.
+  blocks.push({ type: "text", text: TURN_REMINDER });
   return { ...state, messages: [...state.messages, { role: "user", content: blocks }], tool_log: [...state.tool_log, ...log] };
 }
 
@@ -219,15 +230,29 @@ export function retrievedAmounts(toolLog) {
   return out;
 }
 
+/** Percentages stated in tool output (e.g. "25% deposit"), as fractions. */
+export function retrievedPercentages(toolLog) {
+  const out = new Set();
+  for (const entry of toolLog) {
+    if (entry.is_error) continue;
+    for (const m of String(entry.output).matchAll(/(\d{1,3})\s?%/g)) out.add(Number(m[1]) / 100);
+  }
+  return out;
+}
+
 /**
- * Grounded-prices check: every £ amount in the draft must be a retrieved amount, the sum of two retrieved
- * amounts (e.g. service + travel charge), or a figure the customer wrote themselves.
+ * Grounded-prices check: every £ amount in the draft must be a retrieved amount, or derived from retrieved
+ * figures by simple arithmetic: the sum of two (service + travel charge), a multiple up to 10 (three
+ * radiators), or a percentage the tools state (a 25% deposit). Figures the customer wrote are allowed too.
  */
 export function groundingCheck(draftText, toolLog, enquiryText) {
   const retrieved = retrievedAmounts(toolLog);
   const list = [...retrieved];
+  const round = (x) => Math.round(x * 100) / 100;
   const sums = new Set();
-  for (let i = 0; i < list.length; i++) for (let j = i; j < list.length; j++) sums.add(Math.round((list[i] + list[j]) * 100) / 100);
+  for (let i = 0; i < list.length; i++) for (let j = i; j < list.length; j++) sums.add(round(list[i] + list[j]));
+  for (const a of list) for (let k = 2; k <= 10; k++) sums.add(round(a * k));
+  for (const p of retrievedPercentages(toolLog)) for (const a of list) sums.add(round(a * p));
   const fromCustomer = new Set(poundAmounts(enquiryText));
   const amounts = poundAmounts(draftText);
   const unsupported = [];

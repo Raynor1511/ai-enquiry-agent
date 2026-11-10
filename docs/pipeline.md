@@ -66,3 +66,34 @@ See [eval/reports/phase-1-intake.md](../eval/reports/phase-1-intake.md). On the 
 - **Category:** 97.5% correct.
 - **Emergencies and injections:** every emergency caught and every injection flagged, with no false alarms.
 - **Cost and speed:** about $0.0006 and 2.3 s per enquiry.
+
+## Phase 3: drafting
+
+The **Draft reply** sub-workflow runs for every enquiry with status `classified`. Spam, failures and duplicates are skipped.
+
+1. **Emergency alert.** If the urgency is emergency (and it isn't a test), n8n posts an alert to **#alerts** straight away. All customer text in it is escaped, so a message can't ping `@channel` or fake links.
+2. **Tools from the MCP server.** n8n asks the MCP server for its tools (`tools/list` over Streamable HTTP, with a bearer token) and passes them to Claude as tool definitions.
+3. **Tool loop.** Claude Sonnet 5.5 drafts with up to 6 turns. The loop is unrolled into separate nodes, so every turn is visible in the n8n editor.
+   - **Each turn:** Claude's tool calls are sent to the MCP server (`tools/call`), and all results go back in one message.
+   - **Thinking blocks:** each assistant turn, thinking blocks included, is passed back unchanged.
+   - **Last turn:** sets `tool_choice: none`, so the model has to answer.
+   - **Repeats:** a repeated lookup is marked as a repeat, and each set of results ends with a reminder to answer once the facts are in.
+4. **Structured draft.** The draft comes back as JSON: subject, body, reasoning for the reviewer, verified customer id, prices quoted with their sources, slots offered, confidence, and whether a person must decide something.
+5. **Independent checks** (`n8n/src/lib/drafting.mjs`):
+   - **Prices:** every £ amount must be a figure a tool returned, or simple arithmetic on those figures (a sum, a quantity up to ×10, or a percentage the tools state). Figures the customer wrote are allowed too.
+   - **Contacts:** no email address or phone number other than the sender's, the business's, or 0800 111 999.
+   - **Customer:** the customer id must match a verified `find_customer` result, never a name-only match.
+6. **Save.** The draft goes into `drafts`. The enquiry becomes `drafted` and is linked to the verified customer. The audit log records every turn (model, stop reason, tools), every tool call with its input and output, both checks, the review reasons, and tokens, cost and time.
+
+Request settings:
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| Model | `claude-sonnet-5-5` | Writing quality and dependable tool use |
+| `output_config.effort` | `medium` | The recommended starting level for multi-step tool use |
+| `output_config.format` | JSON schema | The draft always parses |
+| `fallbacks` | `"default"` (beta `server-side-fallback-2026-07-01`) | If a safety classifier declines, another model answers instead of the draft failing |
+| `cache_control` | Automatic | The system prompt, tools and earlier turns are cached across the loop |
+| Sampling parameters, forced `tool_choice` | Not sent | This model rejects both |
+
+Measured results: [eval/reports/phase-3-drafting.md](../eval/reports/phase-3-drafting.md). All 34 enquiries that needed a reply got a draft. After the fixes, a draft averages 2.2 turns, about $0.03 and about 10 s.

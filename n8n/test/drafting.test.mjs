@@ -15,6 +15,7 @@ import {
   parseDraft,
   poundAmounts,
   retrievedAmounts,
+  TURN_REMINDER,
   usageTotals,
   verifiedCustomerId,
 } from "../src/lib/drafting.mjs";
@@ -76,9 +77,17 @@ test("a tool-use turn keeps the assistant content unchanged and returns the call
   ]);
   const last = next.messages.at(-1);
   assert.equal(last.role, "user");
-  assert.equal(last.content.length, 2, "all results in one message");
+  assert.equal(last.content.length, 3, "all results in one message, then the reminder");
   assert.deepEqual(last.content[1], { type: "tool_result", tool_use_id: "t2", content: "bad input", is_error: true });
+  assert.deepEqual(last.content[2], { type: "text", text: TURN_REMINDER });
   assert.equal(next.tool_log.length, 2);
+
+  // The same call again is marked as a repeat.
+  const again = addToolResults(next, [{ id: "t3", name: "find_customer", input: { email: "rob.marsh@example.com" } }], [
+    { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: '{"found":true}' }] } },
+  ]);
+  assert.match(again.messages.at(-1).content[0].content, /^\(You already made this exact call/);
+  assert.equal(again.tool_log.at(-1).repeat, true);
   assert.deepEqual(mcpCallBody(r.toolCalls[1], 2), { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_services", arguments: { query: "boiler service" } } });
 });
 
@@ -134,6 +143,18 @@ test("grounding: retrieved prices, sums and the customer's own figures pass; inv
   assert.deepEqual(sum.derived_from_sums, [120]);
   const competitor = groundingCheck("You mentioned another firm quoted £80.", onlyPriceAndTravel, enquiry.body);
   assert.deepEqual(competitor.from_customer, [80]);
+
+  const radiators = [{ name: "get_services", is_error: false, output: JSON.stringify({ services: [{ price_min: 280, price_max: 450 }] }) }];
+  const three = groundingCheck("£280–£450 each, so £840–£1,350 for three.", radiators, "");
+  assert.equal(three.ok, true, "quantities are simple multiples");
+  assert.deepEqual(three.derived_from_sums, [840, 1350]);
+
+  const quote = [
+    { name: "find_customer", is_error: false, output: JSON.stringify({ verified: true, matches: [{ recent_jobs: [{ amount: 8400 }] }] }) },
+    { name: "get_services", is_error: false, output: JSON.stringify({ policies: [{ body: "Bathroom refits need a 25% deposit to book." }] }) },
+  ];
+  assert.equal(groundingCheck("A 25% deposit on £8,400 is £2,100.", quote, "").ok, true, "percentages the tools state");
+  assert.equal(groundingCheck("A deposit of £2,500 secures it.", quote, "").ok, false);
   const bad = groundingCheck("We can do it for £60 this week.", toolLog, enquiry.body);
   assert.equal(bad.ok, false);
   assert.deepEqual(bad.unsupported, [60]);

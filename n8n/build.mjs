@@ -396,7 +396,9 @@ return { json: { enquiry_id: c.enquiry_id, classification: c.classification, ski
     pgNode("Load enquiry", [660, 400], LOAD_SQL, "={{ [$json.enquiry_id] }}"),
     codeNode("Prepare", [880, 400], code("slack", `
 const d = $("Decide").item.json;
-const e = $json;
+// Test enquiries carry fixed dates from the test set; draft them as if they arrived now, so the
+// availability the tools return (always from today) is consistent with the enquiry.
+const e = $json.is_test ? { ...$json, received_at: new Date().toISOString() } : $json;
 const emergency = d.classification.urgency === "emergency" && !e.is_test;
 return { json: { ctx: { enquiry_id: d.enquiry_id, enquiry: e, classification: d.classification },
                  emergency_alert: emergency, alert: emergency ? emergencyAlert(ALERTS_CHANNEL, e, d.classification) : null } };`)),
@@ -407,6 +409,7 @@ return { json: { ctx: { enquiry_id: d.enquiry_id, enquiry: e, classification: d.
       parameters: {
         method: "POST", url: "https://slack.com/api/chat.postMessage",
         authentication: "predefinedCredentialType", nodeCredentialType: "slackApi",
+        sendHeaders: true, headerParameters: { parameters: [{ name: "Content-Type", value: "application/json; charset=utf-8" }] },
         sendBody: true, specifyBody: "json", jsonBody: "={{ JSON.stringify($json.alert) }}", options: { timeout: 15000 },
       },
       credentials: cred("slackApi", CRED.slack),
