@@ -94,6 +94,15 @@ try {
   counts.jobs = (await db.query(`delete from jobs where (not $1::boolean and source_enquiry_id in (select id from doomed)) or customer_id in (select id from doomed_customers)`, [keepCustomers])).rowCount;
   counts.approvals = (await db.query(`delete from approvals where enquiry_id in (select id from doomed)`)).rowCount;
   counts.drafts = (await db.query(`delete from drafts where enquiry_id in (select id from doomed)`)).rowCount;
+  // Demo page submissions (docs/demo.md): those of the enquiries in scope; for an erasure request every
+  // one with the address (confirmed or not); with --live, all of them (or those older than the cut-off);
+  // otherwise the ones with addresses that can't receive mail (left by dev checks).
+  counts.demo_sessions = (await db.query(`delete from demo_sessions s
+     where s.enquiry_id in (select id from doomed) or ('demo:' || s.id) in (select message_id from doomed)
+        or ($3::text is not null and lower(trim(s.email)) = $3::text)
+        or ($1::boolean and $3::text is null and ($2::int is null or s.created_at < now() - make_interval(days => $2::int)))
+        or (not $1::boolean and (split_part(lower(s.email), '@', 2) ~ '(^|\\.)(example|test|invalid|localhost)$'
+                                 or split_part(lower(s.email), '@', 2) ~ '(^|\\.)example\\.(com|net|org|co\\.uk)$'))`, [live, olderThan, email])).rowCount;
   const enq = (await db.query(`delete from enquiries where id in (select id from doomed)`)).rowCount;
   counts.customers_created_from_enquiries = (await db.query(`delete from customers where id in (select id from doomed_customers)`)).rowCount;
   if (enq !== counts.enquiries_test + counts.enquiries_real) throw new Error("enquiry count changed during the run; nothing was deleted");
@@ -149,6 +158,6 @@ await db.end();
 
 const verb = apply ? "deleted" : "would delete";
 console.log(`  enquiries ${verb}: ${counts.enquiries_test + counts.enquiries_real} (evaluation/synthetic ${counts.enquiries_test}, real ${counts.enquiries_real})`);
-console.log(`  drafts ${counts.drafts} · approvals ${counts.approvals} · audit rows ${counts.audit_rows} · jobs ${counts.jobs} · customer records ${counts.customers_created_from_enquiries}`);
+console.log(`  drafts ${counts.drafts} · approvals ${counts.approvals} · audit rows ${counts.audit_rows} · jobs ${counts.jobs} · customer records ${counts.customers_created_from_enquiries} · demo submissions ${counts.demo_sessions}`);
 if (live) console.log(`  calendar holds: ${holds.length} · Slack approval cards: ${cards.length}${apply && counts.slack_cards_deleted !== undefined ? ` (${counts.slack_cards_deleted} removed)` : ""}`);
 if (live) console.log("  Not touched: emails in the demo Gmail mailbox, Slack alerts and thread replies (remove by hand).");
