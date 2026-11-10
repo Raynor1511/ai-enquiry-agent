@@ -35,7 +35,7 @@ Claude only reads and drafts. The MCP tools are read-only, both in code and at t
 | 2 | MCP server | **Done**: 4 tools, 122 tests, Supabase and Google Calendar backends, Docker image |
 | 3 | Drafting | **Done**: Claude Sonnet 5.5 tool loop over the MCP server, grounded-price and contact checks, instant emergency alerts in Slack. 34/34 drafts, about $0.03 each ([report](eval/reports/phase-3-drafting.md)) |
 | 4 | Slack approval and actions | **Done**: approval card with Approve / Edit / Reject, signature-verified webhook, threaded Gmail replies, customer + job records, tentative calendar holds, outcome on the card ([pipeline](docs/pipeline.md#phase-4-approval-and-actions)) |
-| 5 | Reliability and safety | Partly designed in (read-only role, dedupe key, audit tables) |
+| 5 | Reliability and safety | **In progress**: alerts in #alerts for every failed workflow and every handled failure (classification, draft, card, send, calendar holds), with repeat muting ([pipeline](docs/pipeline.md#phase-5-reliability-and-safety)). Next: least-privilege database role, rate limits, housekeeping, test-data cleanup, data-protection notes |
 | 6 | Evaluation | **Labelled test set and intake runner done** (`eval/run-intake.mjs`); drafting scores and a held-out set still to come |
 | 7 | Packaging | Not started |
 

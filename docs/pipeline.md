@@ -134,3 +134,34 @@ sequenceDiagram
 The signing secret reaches the verification node at deploy time only (`__SECRET__` placeholder, strict allowlist and format check in `n8n/deploy.mjs`); the committed workflow files never contain it.
 
 Tested: unit tests (HMAC checked against Node's `crypto` on 300 random inputs, routing, cards, modals, email plans); security checks through the public tunnel (no / forged / tampered / replayed signatures all get 401); a synthetic end-to-end run of approve, double-approve, edit-submit, reject and edit-open against the real workflows, database and calendar; and a live run (web form → card → Edit → email received, card updated, three tentative holds, customer and job created). All 34 enquiries that needed a reply got a draft. After the fixes, a draft averages 2.2 turns, about $0.03 and about 10 s.
+
+## Phase 5: reliability and safety
+
+### Alerts in #alerts
+
+Nothing fails silently. The **Alerts** workflow posts to **#alerts** in two cases:
+
+| Case | How it's caught | What the alert says |
+| --- | --- | --- |
+| A workflow fails (database down, expired credential, a bug in a step) | Every workflow names Alerts as its n8n **error workflow** (`settings.errorWorkflow`); the Error Trigger receives the failed execution | Workflow, failing step, error message, execution id |
+| A step fails but the workflow carries on | A side branch after the step's audit record calls Alerts directly | What happened, what a person should do, sender, subject, enquiry id |
+
+Handled failures that alert:
+
+| Kind | Where | What it means |
+| --- | --- | --- |
+| `classification_failed` | Classify | Claude couldn't classify the enquiry after a retry, so nothing was drafted or posted: the alert is the only signal |
+| `draft_failed` | Draft | No draft; the enquiry will appear in #enquiries as a manual-reply card |
+| `card_failed` | Post for approval | Slack refused the approval card, so the enquiry isn't in #enquiries |
+| `send_failed` | Slack interactions | An approved reply didn't go out (Gmail error, no valid address); the enquiry is marked `failed` |
+| `holds_failed` | Slack interactions | The reply went out but some offered slots weren't held in the calendar |
+
+Design points:
+
+- **No floods.** Repeats of the same workflow error (same step, same message, ignoring numbers) are muted for 30 minutes, then the next alert says how many were muted, so a poller that fails every minute posts once. The memory lives in the Alerts workflow's static data, and a run only writes it when it changes something, so parallel runs don't overwrite each other.
+- **One alert per incident.** When a sub-workflow fails, n8n raises the error in the sub-workflow *and* in its caller. The caller's error names the sub-execution, so Alerts drops it and posts only the sub-workflow's (more precise) alert.
+- **Tests stay quiet.** Handled failures on test enquiries don't alert (evaluation runs report their own failures); a crashed test run still does, because that's a system problem.
+- **Alerts never break the pipeline.** The call to Alerts is fire-and-forget and set to continue on error, and the side branch sits above the main path so a sub-workflow still returns its normal result (n8n's v1 execution order runs the topmost branch first).
+- **Safe content.** Error messages and customer text are escaped (no `@channel`, no fake links), truncated, and posted without links or stack traces. If Slack itself refuses an alert, the Alerts execution fails so it shows in n8n's execution list.
+
+Tested: unit tests for the alert logic (shapes taken from real Error Trigger output) and for the exact code deployed in each alert branch, run against stubbed upstream outputs; the build checks that every `$("Node")` reference exists and every Code node compiles. Live: a deliberately broken test enquiry produced one alert (not two) and the repeat was muted; an approved synthetic enquiry with no email address produced a "reply was not sent" alert; the synthetic approve / edit / reject run produced no false alerts.

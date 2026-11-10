@@ -10,9 +10,10 @@ These JSON files are **generated** by `n8n/build.mjs` from the source in `n8n/sr
 | Harbourline · Post for approval | `approval.json` | Sub-workflow: approval card in #enquiries (or "manual reply needed"), status `awaiting_approval` |
 | Harbourline · Slack interactions | `interactions.json` | Public webhook for Slack buttons and modals: signature check, Approve / Edit / Reject, Gmail reply or send, approval / customer / job records, tentative calendar holds, card outcome |
 | Harbourline · Test intake (eval) | `test-intake.json` | Header-protected webhook for `eval/run-intake.mjs`: Classify + Draft, result in the response; never posts to Slack or sends email |
+| Harbourline · Alerts | `alerts.json` | Error workflow of all the others (Error Trigger) and sub-workflow for handled failures: posts to #alerts, mutes repeats, drops caller duplicates |
 
 ```bash
-node --test n8n/test/      # unit tests for the logic inlined into Code nodes
+node --test n8n/test/      # unit tests for the logic inlined into Code nodes, plus build checks
 node n8n/build.mjs         # regenerate these files
 node n8n/deploy.mjs        # build + create/update + activate in n8n (needs N8N_API_KEY)
 ```

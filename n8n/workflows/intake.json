@@ -398,6 +398,7 @@
     "executionOrder": "v1",
     "timezone": "Europe/London",
     "saveDataErrorExecution": "all",
-    "saveDataSuccessExecution": "all"
+    "saveDataSuccessExecution": "all",
+    "errorWorkflow": "__WORKFLOW__Harbourline · Alerts"
   }
 }
