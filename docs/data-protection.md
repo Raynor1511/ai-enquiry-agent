@@ -11,8 +11,8 @@ Harbourline Plumbing & Heating is a **fictional** company and this is a portfoli
 | **Google Calendar** | Tentative holds: service, customer name, postcode district, enquiry reference (no email or phone) | Released automatically after 3 days unless confirmed |
 | **Slack** | Approval cards (summary, sender name and email, message excerpt, draft); alerts in #alerts (emergencies with contact details, failed steps with sender and subject, Spam-folder matches with sender and excerpt); reminders and notes in threads | Visible to everyone in the workspace: keep it to staff. Customer text is escaped, so it can't ping channels or show fake links |
 | **Anthropic** (Claude API) | For classification: the enquiry with the sender's name, email and phone. For drafting: the same, plus what the MCP tools return (services, prices, free slots, and a matched customer's details and job history) | Processed to produce the classification and draft; see Anthropic's commercial terms and privacy policy for retention. Their API terms don't use this data for model training by default |
-| **n8n** (Docker volume on the host) | Execution history: each run's inputs and outputs, so enquiry text, drafts and Claude's responses | Deleted after 14 days (`EXECUTIONS_DATA_PRUNE` / `EXECUTIONS_DATA_MAX_AGE` in `docker-compose.yml`). Credentials are encrypted with `N8N_ENCRYPTION_KEY` |
-| **ngrok** | Web form submissions and Slack requests pass through its edge (TLS terminated there) | Only the form and webhooks are reachable; ngrok's terms apply to traffic it relays |
+| **n8n** (Docker volume on the portfolio VPS: OVHcloud, Beauharnois, Canada) | Execution history: each run's inputs and outputs, so enquiry text, drafts and Claude's responses | Deleted after 14 days (`EXECUTIONS_DATA_PRUNE` / `EXECUTIONS_DATA_MAX_AGE` in `docker-compose.yml`). Credentials are encrypted with `N8N_ENCRYPTION_KEY` |
+| **Caddy and the gate** (on the same VPS) | Web form submissions and Slack requests pass through them; Caddy terminates TLS | Only the form and webhooks are reachable. Access logs (request line, client IP, user agent) go to Docker's rotated logs (3 × 10 MB). When running on a PC instead, the same traffic passes through ngrok's edge |
 | **MCP server** | Nothing stored. It reads reference data and calendar availability; its logs record which tool ran and the argument *names*, never values | Read-only database role and read-only calendar scope |
 
 Nothing is ever emailed to a customer without a person approving it in Slack.
@@ -62,7 +62,7 @@ This removes their enquiries with the drafts, approvals and audit rows, any cust
 
 ## Known gaps before a real deployment
 
-- **Hosting:** n8n runs on a PC through a free ngrok tunnel. For a client, move it to a managed host in the UK or EU, with backups and monitoring.
+- **Hosting:** n8n runs on one small VPS in Canada (OVHcloud, daily backups), which UK and EU adequacy decisions cover for commercial organisations. For a client, host it in the UK or EU next to their data, with monitoring and tested restores.
 - **Database TLS** uses `no-verify` (encrypted, but the server certificate isn't checked against Supabase's CA). Pin the CA.
 - **Agreements:** check each provider's data processing agreement and international transfer terms (Anthropic, Slack, ngrok and Google process data outside the UK), and list them in the business's privacy notice and records of processing.
 - **Minimisation:** classification doesn't strictly need the sender's email and phone; they could be left out of that request. The audit log keeps tool results for debugging; a client might prefer to keep only the tool names after a few weeks.

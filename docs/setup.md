@@ -1,6 +1,6 @@
 # Setup
 
-How to run the whole stack on one machine: n8n, the MCP server and an ngrok tunnel in Docker, with Supabase as the database.
+How to run the whole stack on one machine: n8n, the MCP server and an ngrok tunnel in Docker, with Supabase as the database. The live demo runs on a server instead, behind a reverse proxy and a gate with the same rules: see [deploy.md](deploy.md).
 
 ## Prerequisites
 

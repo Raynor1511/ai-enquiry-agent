@@ -1,0 +1,102 @@
+# The enquiry agent on the portfolio server (docs/deploy.md). Same services as docker-compose.yml, minus
+# the ngrok tunnel: the shared Caddy edge (repo raynors-infra) serves https://enquiries.raynors.dev and
+# forwards to the gate, which applies the path allow-list and rate limits before anything reaches n8n.
+#
+#   Caddy (web network) -> gate:8080 -> n8n:5678 -> mcp-server:3333
+#
+# Only the gate joins the shared "web" network; n8n and the MCP server are on this project's own
+# network. Nothing publishes a public port: the n8n editor is bound to the server's 127.0.0.1 and is
+# reached through an SSH tunnel (ssh -L 5678:127.0.0.1:5678 raynors-vps), so it stays at
+# http://localhost:5678 and Google's OAuth redirect keeps working unchanged.
+#   docker compose -f compose.server.yml up -d --build
+name: harbourline
+
+services:
+  n8n:
+    image: n8nio/n8n:2.46.7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678" # editor: server-local only, via the SSH tunnel
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      N8N_EDITOR_BASE_URL: http://localhost:5678
+      WEBHOOK_URL: https://${PUBLIC_HOST:?Set PUBLIC_HOST in .env (e.g. enquiries.raynors.dev)}/
+      # Caddy and the gate are in front; the gate passes Caddy's X-Forwarded-For through unchanged.
+      N8N_PROXY_HOPS: "1"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY must be the same key as before, or stored credentials can't be decrypted}
+      # Plain-http cookie is fine: the editor is only reachable through the SSH tunnel.
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: Europe/London
+      TZ: Europe/London
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      # Execution history includes enquiry text and Claude's replies, so it is deleted after 14 days.
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"
+      EXECUTIONS_DATA_PRUNE_MAX_COUNT: "10000"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks: [internal]
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    pids_limit: 512
+
+  mcp-server:
+    build:
+      context: .
+      dockerfile: mcp-server/Dockerfile
+    image: harbourline-mcp:server
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE: ${DATA_SOURCE:-postgres}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_SSL: ${DATABASE_SSL:-require}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN is empty in .env}
+      CALENDAR_SOURCE: ${CALENDAR_SOURCE:-google}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
+      GOOGLE_SERVICE_ACCOUNT_KEY_FILE: /run/secrets/google_calendar_sa
+      FIXED_NOW: ${FIXED_NOW:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    secrets:
+      - google_calendar_sa
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 128
+
+  gate:
+    image: haproxy:3.2.25-alpine
+    container_name: harbourline-gate
+    restart: unless-stopped
+    volumes:
+      - ./infra/gate:/usr/local/etc/haproxy:ro
+    networks: [internal, web]
+    depends_on: [n8n]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+
+secrets:
+  # The Google service account key lives outside the repo (mode 600); it's mounted read-only.
+  google_calendar_sa:
+    file: ${GOOGLE_SERVICE_ACCOUNT_KEY_FILE:?Set GOOGLE_SERVICE_ACCOUNT_KEY_FILE to the key's path on the server}
+
+volumes:
+  n8n_data:
+
+networks:
+  internal: {}
+  web:
+    external: true

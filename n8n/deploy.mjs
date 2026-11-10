@@ -86,6 +86,6 @@ for (const { workflow, activate } of WORKFLOWS) {
   console.log(`  ${current ? "updated" : "created"} ${workflow.name} (id ${id})${activate ? ", active" : ""}`);
 }
 
-console.log(`\n  Web form:      https://${env.NGROK_DOMAIN}/form/${PATHS.form}`);
+console.log(`\n  Web form:      https://${env.PUBLIC_HOST || env.NGROK_DOMAIN}/form/${PATHS.form}`);
 console.log(`  Test webhook:  ${N8N}/webhook/${PATHS.testWebhook}  (header X-Harbourline-Test-Key)`);
 console.log(`  Sub-workflow:  ${WF.classify}`);

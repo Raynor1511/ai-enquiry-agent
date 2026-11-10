@@ -22,7 +22,7 @@ settings:
   interactivity:
     is_enabled: true
     # Button clicks and the Edit pop-up are sent here (an n8n webhook, through the ngrok tunnel).
-    request_url: https://{{NGROK_DOMAIN}}/webhook/slack-interactions
+    request_url: https://{{PUBLIC_HOST}}/webhook/slack-interactions
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false

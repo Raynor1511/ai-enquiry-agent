@@ -67,11 +67,11 @@ Seven n8n workflows do the work (intake, classify, draft, post for approval, Sla
 
 ## Stack
 
-Claude API (Haiku 5.5 for classification, Sonnet 5.5 for drafting, Opus 5.5 as the evaluation judge) · a TypeScript MCP server (`@modelcontextprotocol/sdk`) · n8n 2 · Supabase Postgres · Slack · Gmail · Google Calendar · Docker Compose · ngrok.
+Claude API (Haiku 5.5 for classification, Sonnet 5.5 for drafting, Opus 5.5 as the evaluation judge) · a TypeScript MCP server (`@modelcontextprotocol/sdk`) · n8n 2 · Supabase Postgres · Slack · Gmail · Google Calendar · Docker Compose · Caddy and HAProxy on a VPS (ngrok when running on a PC).
 
 ## Run it yourself
 
-The full setup (Supabase, Google, Slack, n8n and ngrok, all on free plans) is in [docs/setup.md](docs/setup.md). To try only the MCP server, with the bundled sample data and no accounts:
+The full setup on a PC (Supabase, Google, Slack, n8n and ngrok, all on free plans) is in [docs/setup.md](docs/setup.md); the live demo runs on a small VPS behind Caddy and an HAProxy gate ([docs/deploy.md](docs/deploy.md)). To try only the MCP server, with the bundled sample data and no accounts:
 
 ```bash
 cd mcp-server
@@ -106,7 +106,7 @@ The business-specific parts are data files, two prompts and two small interfaces
 | [`eval/`](eval) | 40 labelled enquiries and a 15-enquiry held-out set, the runner, the Claude grader, and the reports ([docs](eval/README.md)) |
 | [`seed/`](seed) | The fictional business: services and prices, policies, service area, customers, job history; the database schema and roles ([docs](docs/data-model.md)) |
 | [`scripts/`](scripts) | Setup (`.env`, database and roles, n8n credentials, Slack), test-set validation, and test-data cleanup |
-| [`docker-compose.yml`](docker-compose.yml), [`infra/`](infra) | The local stack: n8n, the MCP server, and an ngrok tunnel with an allow-list and rate limits |
+| [`docker-compose.yml`](docker-compose.yml), [`compose.server.yml`](compose.server.yml), [`infra/`](infra) | The stack on a PC (with an ngrok tunnel) and on the server (behind an HAProxy gate), with the same path allow-list and rate limits ([setup](docs/setup.md), [deploy](docs/deploy.md)) |
 
 ## How it was built
 
