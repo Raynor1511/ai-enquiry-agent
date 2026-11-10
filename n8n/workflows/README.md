@@ -14,7 +14,7 @@ These JSON files are **generated** by `n8n/build.mjs` from the source in `n8n/sr
 | Harbourline · Alerts | `alerts.json` | Error workflow of all the others (Error Trigger) and sub-workflow for handled failures: posts to #alerts, mutes repeats, drops caller duplicates |
 
 ```bash
-node --test n8n/test/      # unit tests for the logic inlined into Code nodes, plus build checks
+node --test "n8n/test/*.test.mjs"   # unit tests for the logic inlined into Code nodes, plus build checks (Node 22+)
 node n8n/build.mjs         # regenerate these files
 node n8n/deploy.mjs        # build + create/update + activate in n8n (needs N8N_API_KEY)
 ```

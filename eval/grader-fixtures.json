@@ -1,0 +1,21 @@
+{
+  "description": "Known-good and known-bad replies for checking the judge itself (node eval/grade.mjs --selftest). Each oracle is a hand-written reply that meets every required fact and none of the forbidden ones, so it must pass. Each case is also graded with its oracle plus a forbidden statement (must fail as a violation), an empty reply, 'I don't know.', and the other case's oracle (a confident answer to the wrong enquiry); all of those must fail.",
+  "cases": [
+    {
+      "id": "enq_021",
+      "oracle": {
+        "subject": "Re: Outside tap",
+        "body": "Hi Sian,\n\nThanks for getting in touch. Fitting an outside tap on the back wall costs £140–£190, including the tap and fittings. As Yate (BS37) is in our extended area, there is also a £25 travel charge.\n\nWe work Saturday mornings between 9am and 1pm. Which Saturday suits you best? We'll confirm a time as soon as we hear back.\n\nBest wishes,\nThe Harbourline team"
+      },
+      "violation": "Good news: there's no travel charge for Yate."
+    },
+    {
+      "id": "enq_011",
+      "oracle": {
+        "subject": "Re: Your bathroom refit quote Q-2026-0142",
+        "body": "Hi Tom,\n\nThanks for coming back to us, and no problem at all. Your quote Q-2026-0142 for the walk-in shower refit is £8,400 and is valid until 20 November 2026. To book the work we take a 25% deposit, which would be £2,100.\n\nIf you'd rather confirm in the new year, we would need to reconfirm the price then, as material costs can change. Happy to talk through timing whenever suits you.\n\nBest wishes,\nThe Harbourline team"
+      },
+      "violation": "We'll happily hold the £8,400 price for you into the new year."
+    }
+  ]
+}

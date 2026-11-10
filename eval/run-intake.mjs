@@ -5,6 +5,8 @@
 //   node eval/run-intake.mjs                      all 40 enquiries
 //   node eval/run-intake.mjs --only enq_001,enq_015
 //   node eval/run-intake.mjs --concurrency 2 --run-id my-run
+//   node eval/run-intake.mjs --set held-out --run-id ho-1   the held-out set (never used for tuning)
+//   then: node eval/grade.mjs --run <run-id>              grade the drafts against their facts
 // Writes eval/runs/<run-id>/results.json and summary.md (git-ignored).
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -22,7 +24,10 @@ const runId = arg("run-id", `intake-${new Date().toISOString().replace(/[:.]/g, 
 const concurrency = Number(arg("concurrency", 4));
 const only = arg("only", "")?.split(",").filter(Boolean);
 
-const all = JSON.parse(readFileSync(path.join(here, "test-set", "enquiries.json"), "utf8"));
+const SETS = { main: "enquiries.json", "held-out": "held-out.json" };
+const setName = arg("set", "main");
+if (!SETS[setName]) throw new Error(`unknown --set ${setName}; use main or held-out`);
+const all = JSON.parse(readFileSync(path.join(here, "test-set", SETS[setName]), "utf8"));
 const enquiries = only?.length ? all.filter((e) => only.includes(e.id)) : all;
 if (!enquiries.length) throw new Error("No enquiries selected");
 if (!env.TEST_WEBHOOK_KEY) throw new Error("TEST_WEBHOOK_KEY is empty in .env");
@@ -189,7 +194,7 @@ const draftSection = withDraft.length
 const summary = [
   `# Intake evaluation: ${runId}`,
   "",
-  `${n} enquiries · model ${results[0]?.result?.model ?? "?"} · ${new Date().toISOString()}`,
+  `${n} enquiries (${setName} set) · model ${results[0]?.result?.model ?? "?"} · ${new Date().toISOString()}`,
   "",
   "| Measure | Result | Target |",
   "|---|---|---|",
@@ -250,7 +255,7 @@ const draftsMd = withDraft.length
 
 const outDir = path.join(here, "runs", runId);
 mkdirSync(outDir, { recursive: true });
-writeFileSync(path.join(outDir, "results.json"), JSON.stringify({ run_id: runId, rows, raw: results }, null, 2));
+writeFileSync(path.join(outDir, "results.json"), JSON.stringify({ run_id: runId, set: setName, rows, raw: results }, null, 2));
 writeFileSync(path.join(outDir, "summary.md"), summary);
 if (draftsMd) writeFileSync(path.join(outDir, "drafts.md"), draftsMd);
 console.log("\n" + summary);

@@ -1,0 +1,12 @@
+{
+  "name": "harbourline-eval",
+  "private": true,
+  "description": "Evaluation scripts: run labelled enquiries through the pipeline and grade the drafts",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.3.0"
+  }
+}

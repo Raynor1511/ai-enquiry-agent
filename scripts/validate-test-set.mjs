@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-// Validates eval/test-set/enquiries.json against the seed data, so labels stay consistent
-// whenever enquiries or seed data are edited. Run: node scripts/validate-test-set.mjs
+// Validates a test set against the seed data, so labels stay consistent whenever enquiries or seed
+// data are edited.
+//   node scripts/validate-test-set.mjs                  the 40-enquiry set (eval/test-set/enquiries.json)
+//   node scripts/validate-test-set.mjs --set held-out   the held-out set (eval/test-set/held-out.json),
+//                                                       never used for prompt tuning
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,14 +11,24 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => JSON.parse(readFileSync(path.join(root, p), "utf8"));
 
-const enquiries = read("eval/test-set/enquiries.json");
+// Each set has a fixed mix, so an accidental edit that drops or relabels a case is caught.
+const SETS = {
+  main: { file: "eval/test-set/enquiries.json", total: 40, injections: 3,
+    counts: { new_job_request: 8, quote_request: 8, emergency: 7, complaint: 5, existing_customer_followup: 6, spam: 6 } },
+  "held-out": { file: "eval/test-set/held-out.json", total: 15, injections: 2, idPrefix: "ho_",
+    counts: { new_job_request: 3, quote_request: 3, emergency: 2, complaint: 2, existing_customer_followup: 3, spam: 2 } },
+};
+const setArg = process.argv.includes("--set") ? process.argv[process.argv.indexOf("--set") + 1] : "main";
+const SET = SETS[setArg];
+if (!SET) throw new Error(`unknown set ${setArg}; use one of ${Object.keys(SETS).join(", ")}`);
+const enquiries = read(SET.file);
 const customers = read("seed/data/customers.json");
 const services = read("seed/data/services.json");
 const areas = read("seed/data/service-areas.json");
 
 const CATEGORIES = ["new_job_request", "quote_request", "emergency", "complaint", "existing_customer_followup", "spam"];
 const URGENCIES = ["emergency", "high", "normal", "low"];
-const EXPECTED_COUNTS = { new_job_request: 8, quote_request: 8, emergency: 7, complaint: 5, existing_customer_followup: 6, spam: 6 };
+const EXPECTED_COUNTS = SET.counts;
 const RESERVED_EMAIL = /@([a-z0-9-]+\.)*(example(\.com|\.net|\.org|\.co\.uk)?|[a-z0-9-]+\.example)$/i;
 const DRAMA_PHONE = /^(07700900\d{3}|01174960\d{3})$/;
 
@@ -37,8 +50,11 @@ const serviceIds = new Set(services.map((s) => s.id));
 const errors = [];
 const fail = (id, msg) => errors.push(`${id}: ${msg}`);
 
-if (!Array.isArray(enquiries)) throw new Error("enquiries.json must be an array");
-if (enquiries.length !== 40) errors.push(`expected 40 enquiries, found ${enquiries.length}`);
+if (!Array.isArray(enquiries)) throw new Error(`${SET.file} must be an array`);
+if (enquiries.length !== SET.total) errors.push(`expected ${SET.total} enquiries, found ${enquiries.length}`);
+// Held-out cases must never collide with the main set (ids become test message ids).
+const otherIds = new Set(setArg === "main" ? [] : read(SETS.main.file).map((e) => e.id));
+const otherMessageIds = new Set(setArg === "main" ? [] : read(SETS.main.file).map((e) => e.message_id).filter(Boolean));
 
 const seenIds = new Set();
 const seenMessageIds = new Set();
@@ -49,6 +65,9 @@ for (const e of enquiries) {
   const id = e.id ?? "(no id)";
   const l = e.labels ?? {};
   if (seenIds.has(id)) fail(id, "duplicate id");
+  if (otherIds.has(id)) fail(id, "id also used in the main set");
+  if (SET.idPrefix && !String(id).startsWith(SET.idPrefix)) fail(id, `id must start with ${SET.idPrefix}`);
+  if (e.message_id && otherMessageIds.has(e.message_id)) fail(id, "message_id also used in the main set");
   seenIds.add(id);
   if (e.message_id) {
     if (seenMessageIds.has(e.message_id)) fail(id, "duplicate message_id");
@@ -100,10 +119,10 @@ for (const e of enquiries) {
 }
 
 for (const [c, n] of Object.entries(EXPECTED_COUNTS)) if (counts[c] !== n) errors.push(`expected ${n} ${c}, found ${counts[c]}`);
-if (injections !== 3) errors.push(`expected 3 injection attempts, found ${injections}`);
+if (injections !== SET.injections) errors.push(`expected ${SET.injections} injection attempts, found ${injections}`);
 
 if (errors.length) {
   console.error(`✗ ${errors.length} problem(s):\n  ` + errors.join("\n  "));
   process.exit(1);
 }
-console.log(`✓ ${enquiries.length} enquiries valid`, counts, `injections: ${injections}`);
+console.log(`✓ ${SET.file}: ${enquiries.length} enquiries valid`, counts, `injections: ${injections}`);
