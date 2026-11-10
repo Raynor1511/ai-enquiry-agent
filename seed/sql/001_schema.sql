@@ -3,6 +3,11 @@
 --
 -- Reference data (read by the MCP server):  services, policies, service_area_districts, customers, jobs
 -- Pipeline data (written by n8n only):      enquiries, drafts, approvals, audit_log
+--
+-- The Supabase project can be shared with other apps (each with its own schema and roles). Everything
+-- here lives in the public schema and touches only this project's roles; the search path is pinned so
+-- unqualified names can never resolve to another app's schema.
+set search_path = public, extensions;
 
 -- ---------------------------------------------------------------------------
 -- Helper functions. These mirror mcp-server/src/domain/{phone,text}.ts exactly.

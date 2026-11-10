@@ -1,6 +1,10 @@
 -- Database roles: read-only for the MCP server, least-privilege writer for n8n.
 -- The admin user (SUPABASE_DB_URL) is only used by setup scripts, never by a running service.
 -- Logins and random passwords are set by scripts/db-setup.mjs (passwords are never committed).
+-- The Supabase project can be shared with other apps (each with its own schema and roles). Everything
+-- here lives in the public schema and touches only this project's roles; the search path is pinned so
+-- unqualified names can never resolve to another app's schema.
+set search_path = public, extensions;
 
 -- ---------------------------------------------------------------------------
 -- Read-only role for the MCP server.

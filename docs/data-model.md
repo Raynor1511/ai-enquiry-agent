@@ -33,6 +33,8 @@ Row-level security is on for every table. On Supabase that blocks the public API
 | `n8n_writer` | n8n | Read what the workflows read; add enquiries, drafts, approvals, customers, jobs, audit rows; change an enquiry's status, classification and customer link, and a draft's Slack location | Delete or truncate anything; rewrite a customer's message, a draft's text or an approval; change the audit log or read its details (it may read only which event happened when); read policies or the service area; create or alter tables |
 | admin (`postgres`) | `scripts/db-setup.mjs`, cleanup scripts | Everything | (never given to a running service) |
 
+**Sharing a Supabase project.** Everything here lives in the `public` schema and uses only the roles above, so a Supabase project can also host other apps in their own schemas with their own roles. The setup and cleanup scripts pin `search_path` to `public` and never grant, revoke or change anything outside it.
+
 `n8n_writer` also has a 30-second statement timeout, so a stuck query can't hold locks. `scripts/db-setup.mjs` proves both roles: it replays every query the n8n workflows run as `n8n_writer` (inside a transaction that is rolled back) and checks that the forbidden statements are refused; a unit test makes sure every Postgres node's query is in that list.
 
 ## Loading into Supabase

@@ -65,6 +65,8 @@ try {
 } catch (err) {
   die(`Could not connect: ${err.message}`);
 }
+// The project can be shared with other apps (their own schemas and roles): only ever touch public.
+await db.query("set search_path = public, extensions");
 const info = (await db.query("select current_user, split_part(version(), ' ', 2) as version")).rows[0];
 ok(`connected as ${info.current_user}, Postgres ${info.version}`);
 

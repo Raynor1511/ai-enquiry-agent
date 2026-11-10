@@ -59,6 +59,8 @@ if (!env.SUPABASE_DB_URL) {
 const pg = createRequire(path.join(ROOT, "mcp-server", "package.json"))("pg");
 const db = new pg.Client({ connectionString: env.SUPABASE_DB_URL, ssl: /localhost|127\.0\.0\.1/.test(env.SUPABASE_DB_URL) ? false : { rejectUnauthorized: false } });
 await db.connect();
+// The project can be shared with other apps (their own schemas and roles): only ever touch public.
+await db.query("set search_path = public, extensions");
 
 console.log(`Scope: ${email ? "one sender's enquiries and customer records" : live ? "all enquiries (test and real)" : "evaluation enquiries and synthetic leftovers"}${olderThan !== null ? `, received more than ${olderThan} day(s) ago` : ""}${keepCustomers ? ", keeping customers and jobs" : ""}`);
 console.log(apply ? "Deleting." : "Dry run: nothing will be deleted. Add --apply to delete.");
