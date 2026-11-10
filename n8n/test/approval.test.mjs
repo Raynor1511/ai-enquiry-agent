@@ -83,7 +83,7 @@ const row = {
   grounding_check: { prices: { ok: true, amounts: [95], unsupported: [] }, contacts: { ok: true } },
   proposed_slot: [{ start: "2026-11-12T10:00:00+00:00", end: "2026-11-12T12:00:00+00:00", label: "Thu 12 Nov, 10:00–12:00" }],
   review_reason: "", customer_id: "cus_008", customer_name: "Robert Marsh",
-  enquiry_id: "e-1", source: "email", message_id: "gmail:abc", sender_name: "Rob Marsh", sender_email: "rob@gmail.com", sender_phone: "",
+  enquiry_id: "e-1", source: "email", message_id: "gmail:abc", sender_name: "Rob Marsh", sender_email: "r.marsh.fixture.harbourline@gmail.com", sender_phone: "",
   received_at: "2026-11-10T09:00:00Z",
   classification: { category: "new_job_request", urgency: "normal", summary: "Boiler service, BS31", postcode: "BS31 2JA", injection_suspected: false, service_wanted: "boiler service" },
 };
@@ -140,7 +140,7 @@ test("modals carry the draft id, channel and message, within Slack's limits", ()
 });
 
 test("email plans: thread replies for email, new emails for forms, simulated for reserved test domains", () => {
-  assert.deepEqual(emailPlan(row, "Re: x", "Body"), { mode: "reply", to: "rob@gmail.com", gmail_id: "abc", subject: "Re: x", body: "Body" });
+  assert.deepEqual(emailPlan(row, "Re: x", "Body"), { mode: "reply", to: "r.marsh.fixture.harbourline@gmail.com", gmail_id: "abc", subject: "Re: x", body: "Body" });
   assert.equal(emailPlan({ ...row, source: "webform", message_id: "form:12" }, "s", "b").mode, "send");
   assert.equal(emailPlan({ ...row, sender_email: "jane@example.com" }, "s", "b").mode, "simulated");
   assert.equal(emailPlan({ ...row, sender_email: "x@harbour-lettings.example" }, "s", "b").mode, "simulated");

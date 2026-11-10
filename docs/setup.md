@@ -5,7 +5,7 @@ How to run the whole stack on one machine: n8n, the MCP server and an ngrok tunn
 ## Prerequisites
 
 - Docker Desktop
-- Node 20+ (22 LTS recommended), for the setup scripts and tests
+- Node 22 or later (Node 20 is past end of life, and the test commands use glob patterns), for the setup scripts and tests
 - Accounts: Anthropic Console, Supabase, ngrok (free), a demo Google account, Slack
 
 ## 1. Configure `.env`
