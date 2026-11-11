@@ -38,7 +38,10 @@ export function checkStart(body) {
 export function confirmEmail(publicHost, token, name) {
   // The token is in the fragment, which browsers never send to a server, so it stays out of every log.
   const link = `https://${publicHost}/demo/confirm#${token}`;
-  const first = String(name ?? "").trim().split(/\s+/)[0] || "there";
+  // Anyone can type any address, so nothing they wrote goes into this email except a plain first name
+  // (letters, hyphen, apostrophe): a link or advert in the name field can't be delivered to a stranger.
+  const word = String(name ?? "").trim().split(/\s+/)[0] ?? "";
+  const first = /^\p{L}[\p{L}'’-]{0,29}$/u.test(word) ? word : "there";
   return {
     link,
     subject: "Confirm your Harbourline demo enquiry",
@@ -52,7 +55,7 @@ export function confirmEmail(publicHost, token, name) {
       link,
       "",
       "The link works for 24 hours. If you approve the drafted reply on the demo page, it will be emailed",
-      "to this address. Your enquiry and everything made from it is deleted automatically after 7 days.",
+      "to this address. Your enquiry and the records made from it are deleted automatically after 7 days.",
       "",
       "If you didn't ask for this, ignore this email: nothing happens unless the link is used.",
     ].join("\n"),

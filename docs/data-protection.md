@@ -1,21 +1,22 @@
 # Data protection
 
-Harbourline Plumbing & Heating is a **fictional** company and this is a portfolio demo. The seed customers use reserved `example.*` email domains and Ofcom's drama phone numbers; the only real personal data the system has handled is the developer's own test messages. These notes describe what a real deployment for a UK business would store, where, for how long, and how to delete it. They are a technical starting point for the business's own UK GDPR records, not legal advice.
+Harbourline Plumbing & Heating is a **fictional** company and this is a portfolio demo. The seed customers use reserved `example.*` email domains and Ofcom's drama phone numbers. Real personal data comes from the developer's own tests and from visitors to the [live demo page](demo.md), whose data is deleted after 7 days. These notes describe what a real deployment for a UK business would store, where, for how long, and how to delete it. They are a technical starting point for the business's own UK GDPR records, not legal advice.
 
 ## What is stored where
 
 | Place | What personal data | Notes |
 | --- | --- | --- |
-| **Supabase** (Postgres, EU region eu-west-1) | `enquiries`: sender name, email, phone, subject, message, form fields. `drafts`: draft replies. `approvals`: the text actually sent, who approved it (Slack name and user id). `customers` / `jobs`: records created when a reply is approved. `audit_log`: every step, with model, tokens and cost; the drafting entry includes the tool results Claude saw (cut to 2,000 characters each), which can include a matched customer's details and job history | The main store. Row-level security on every table; each service has its own role (below) |
-| **Gmail** (the business mailbox) | Incoming enquiry emails; replies sent | Google's account terms apply. For a client, use Google Workspace (which comes with a data processing agreement), not a consumer account |
-| **Google Calendar** | Tentative holds: service, customer name, postcode district, enquiry reference (no email or phone) | Released automatically after 3 days unless confirmed |
+| **Supabase** (Postgres, EU region eu-west-1) | `enquiries`: sender name, email, phone, subject, message, form fields. `drafts`: draft replies. `approvals`: the text actually sent, who approved it (Slack name and user id). `customers` / `jobs`: records created when a reply is approved. `audit_log`: every step, with model, tokens and cost; the drafting entry includes the tool results Claude saw (cut to 2,000 characters each), which can include a matched customer's details and job history. `demo_sessions`: the demo page's submissions (name, email, postcode, message) and the SHA-256 of each private link | The main store. Row-level security on every table; each service has its own role (below) |
+| **Gmail** (the business mailbox) | Incoming enquiry emails; replies sent; the demo page's confirmation emails | Google's account terms apply. For a client, use Google Workspace (which comes with a data processing agreement), not a consumer account |
+| **Google Calendar** | Tentative holds: the catalogue service, the postcode district and an enquiry reference. No names, email, phone or anything the sender typed, because the demo shows this calendar publicly | Released automatically after 3 days unless confirmed |
+| **Demo service** (on the same VPS) | Nothing stored. It passes the demo form to n8n and reads one visitor's state through `demo_view`; its log lines are method, path, status and time only (private links are in the URL fragment and never reach it) | See [demo](demo.md) |
 | **Slack** | Approval cards (summary, sender name and email, message excerpt, draft); alerts in #alerts (emergencies with contact details, failed steps with sender and subject, Spam-folder matches with sender and excerpt); reminders and notes in threads | Visible to everyone in the workspace: keep it to staff. Customer text is escaped, so it can't ping channels or show fake links |
 | **Anthropic** (Claude API) | For classification: the enquiry with the sender's name, email and phone. For drafting: the same, plus what the MCP tools return (services, prices, free slots, and a matched customer's details and job history) | Processed to produce the classification and draft; see Anthropic's commercial terms and privacy policy for retention. Their API terms don't use this data for model training by default |
 | **n8n** (Docker volume on the portfolio VPS: OVHcloud, Beauharnois, Canada) | Execution history: each run's inputs and outputs, so enquiry text, drafts and Claude's responses | Deleted after 14 days (`EXECUTIONS_DATA_PRUNE` / `EXECUTIONS_DATA_MAX_AGE` in `docker-compose.yml`). Credentials are encrypted with `N8N_ENCRYPTION_KEY` |
-| **Caddy and the gate** (on the same VPS) | Web form submissions and Slack requests pass through them; Caddy terminates TLS | Only the form and webhooks are reachable. Access logs (request line, client IP, user agent) go to Docker's rotated logs (3 × 10 MB). When running on a PC instead, the same traffic passes through ngrok's edge |
+| **Caddy and the gate** (on the same VPS) | Web form submissions, demo page requests and Slack requests pass through them; Caddy terminates TLS | Only the form, the demo page and the webhooks are reachable. Access logs (request line, client IP, user agent) go to Docker's rotated logs (3 × 10 MB). When running on a PC instead, the same traffic passes through ngrok's edge |
 | **MCP server** | Nothing stored. It reads reference data and calendar availability; its logs record which tool ran and the argument *names*, never values | Read-only database role and read-only calendar scope |
 
-Nothing is ever emailed to a customer without a person approving it in Slack.
+Nothing is ever emailed to a customer without a person approving it in Slack. On the demo page, the visitor is that person, and the reply can only go to the address they confirmed.
 
 ## Who can access what
 
@@ -23,15 +24,17 @@ Nothing is ever emailed to a customer without a person approving it in Slack.
 | --- | --- |
 | n8n | Database role `n8n_writer`: inserts and limited updates only. It can't delete or truncate anything, rewrite a customer's message, a draft or an approval, change the audit log or read its details, or alter tables ([roles](data-model.md#database-postgres--supabase)). Gmail: read, label, send (no permanent delete). Calendar: events only |
 | MCP server | Database role `mcp_readonly`: `SELECT` on services, policies, service area, customers and jobs (it can't see enquiries, drafts or the audit log). Calendar: a service account; the server only ever asks Google for a read-only token (the same account can edit events when the setup scripts seed or clean the demo calendar) |
+| Demo service | Database role `demo_web`: it may only run `demo_view(token hash)`, which returns one demo session's own data to whoever holds its private link; it can't read or write any table. n8n's demo webhooks: a header key, on the private network only |
 | Setup scripts | The admin connection (`SUPABASE_DB_URL`), only on the developer's machine; never given to a running service |
 | People | The Supabase project owner; the n8n owner account (the editor is only on `localhost`, blocked at the tunnel); members of the Slack workspace; whoever has the Gmail account |
-| The public | The web form and Slack's webhook only. Slack requests are signature-checked; there are rate limits; the evaluation webhook is not public ([setup](setup.md)) |
+| The public | The web form, the demo page and Slack's webhook only. Slack requests are signature-checked; there are rate limits and daily caps; the evaluation and demo webhooks are not public ([setup](setup.md), [demo](demo.md)). Anyone may view the bookings calendar, which holds no personal data |
 
 ## Retention
 
 | Data | Kept for | How it is enforced |
 | --- | --- | --- |
 | Enquiries, drafts, approvals, audit rows | Until deleted. Suggested for a client: 12 months for enquiries that didn't become work | `node scripts/clear-test-data.mjs --live --older-than 365 --keep-customers --apply` (for example monthly) |
+| Demo page enquiries (with their drafts, approvals, audit rows, customer and job records, sessions and Slack cards) | 7 days; unconfirmed submissions 1 day | Housekeeping workflow, daily at 03:30 (`purge_demo_data`). Their n8n execution history goes after 14 days; the confirmation and reply emails stay in the demo mailbox's Sent folder until deleted by hand |
 | Customers and jobs | As long as the business needs them for its own records (invoices, warranties, gas safety work) | Kept by `--keep-customers`; removed for an erasure request (below) |
 | n8n execution history | 14 days | n8n pruning (`docker-compose.yml`) |
 | Calendar holds | 3 days unless confirmed | Housekeeping workflow, daily |
@@ -50,7 +53,7 @@ node scripts/clear-test-data.mjs --live --email person@example.com            # 
 node scripts/clear-test-data.mjs --live --email person@example.com --apply    # delete
 ```
 
-This removes their enquiries with the drafts, approvals and audit rows, any customer record with that address and its jobs, their tentative calendar holds and their Slack approval cards. Then delete their emails from Gmail (inbox and Sent), any Slack alerts or thread messages that mention them, and any confirmed calendar bookings. n8n's execution history ages out within 14 days; to remove it sooner, delete those executions in the n8n editor. Before erasing, check whether the business must keep any of it (for example a job record for a gas safety certificate).
+This removes their enquiries with the drafts, approvals and audit rows, any customer record with that address and its jobs, their demo page submissions, their tentative calendar holds and their Slack approval cards. Then delete their emails from Gmail (inbox and Sent), any Slack alerts or thread messages that mention them, and any confirmed calendar bookings. n8n's execution history ages out within 14 days; to remove it sooner, delete those executions in the n8n editor. Before erasing, check whether the business must keep any of it (for example a job record for a gas safety certificate).
 
 ## Secrets
 

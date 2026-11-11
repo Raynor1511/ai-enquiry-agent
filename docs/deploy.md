@@ -4,9 +4,10 @@ The live demo runs at **https://enquiries.raynors.dev** on the portfolio VPS (Ub
 
 ```mermaid
 flowchart LR
-    U[Web form visitors<br/>Slack button clicks] -- HTTPS --> C[Caddy edge<br/>ports 80/443, Let's Encrypt]
+    U[Web form and demo page visitors<br/>Slack button clicks] -- HTTPS --> C[Caddy edge<br/>ports 80/443, Let's Encrypt]
     C -- web network --> G[Gate: HAProxy<br/>path allow-list, rate limits]
     G -- project network --> N[n8n<br/>editor on 127.0.0.1 only]
+    G -- /demo --> D[Demo service] --> N
     N --> M[MCP server]
     A[Admin PC] -- SSH tunnel --> N
     N --> X[Claude · Slack · Gmail · Google Calendar]
@@ -15,10 +16,10 @@ flowchart LR
 
 ## How it runs
 
-- **[`compose.server.yml`](../compose.server.yml)** runs three containers: n8n, the MCP server and the gate. Only the gate joins the shared `web` network that Caddy uses; n8n and the MCP server stay on the project's own network. Nothing publishes a public port, so nothing bypasses the server's firewall.
-- **The gate** ([`infra/gate/haproxy.cfg`](../infra/gate/haproxy.cfg)) applies the same rules the ngrok traffic policy applies on a PC: only `/webhook/*` and `/form/*` reach n8n (the editor, its API and the evaluation webhook get 404), at most 120 requests a minute per client IP, and form submissions capped at 5 per 10 minutes per IP and 20 an hour in total (429 with `Retry-After`).
+- **[`compose.server.yml`](../compose.server.yml)** runs four containers: n8n, the MCP server, the [demo page](demo.md) service and the gate. Only the gate joins the shared `web` network that Caddy uses; the others stay on the project's own network. Nothing publishes a public port, so nothing bypasses the server's firewall.
+- **The gate** ([`infra/gate/haproxy.cfg`](../infra/gate/haproxy.cfg)) applies the same rules the ngrok traffic policy applies on a PC: only `/webhook/*` and `/form/*` reach n8n (the editor, its API, the evaluation webhook and the demo page's webhooks get 404), `/demo` goes to the demo service, at most 120 requests a minute per client IP, and form submissions (with the demo page's submit and confirm calls) capped at 5 per 10 minutes per IP and 20 an hour in total (429 with `Retry-After`). Paths containing `//`, `/./`, `/../` or `%` are refused first, so no spelling of a private path slips through.
 - **The n8n editor** is bound to the server's `127.0.0.1:5678` and reached through an SSH tunnel, so it is still `http://localhost:5678` on the admin PC. Google's OAuth redirect (`http://localhost:5678/rest/oauth2-credential/callback`) keeps working unchanged, and the scripts that use n8n's API (`n8n/deploy.mjs`, `n8n-credentials.mjs`, the evaluation runner) work through the same tunnel.
-- **Hardening**, as for the other demos: no Linux capabilities, `no-new-privileges`, memory and process limits; the MCP server and the gate also run with read-only filesystems.
+- **Hardening**, as for the other demos: no Linux capabilities, `no-new-privileges`, memory and process limits; the MCP server, the demo service and the gate also run with read-only filesystems.
 - **Settings** come from `/srv/ai-enquiry-agent/.env` (mode 600): the same keys as on a PC, plus `PUBLIC_HOST=enquiries.raynors.dev` and the server path of the Google service account key (`/srv/ai-enquiry-agent/secrets/`, mode 600).
 - **Data:** n8n's workflows, credentials and execution history are in the `harbourline_n8n_data` Docker volume (14-day execution pruning). Everything else is in Supabase, as before.
 

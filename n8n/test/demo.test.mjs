@@ -80,6 +80,12 @@ test("demo requests are checked again inside n8n", async () => {
   assert.match(mail.body, /^Hi Dana,/);
   assert.match(mail.body, /fictional company/);
   assert.match(mail.body, /deleted automatically after 7 days/);
+  // Only a plain first name from the form reaches the email: never a link or other text.
+  for (const name of ["www.cheap-pills.example Visit", "http://spam.example", "Win£1000!", "a".repeat(40), "", null])
+    assert.match(confirmEmail("h.example.org", token, name).body, /^Hi there,/, String(name));
+  assert.match(confirmEmail("h.example.org", token, "Zoë O'Brien-Smith").body, /^Hi Zoë,/);
+  assert.match(confirmEmail("h.example.org", token, "Anne-Marie").body, /^Hi Anne-Marie,/);
+  assert.ok(!confirmEmail("h.example.org", token, "Dana http://spam.example").body.includes("spam"), "only the first word is used");
 
   const h = tokenHash(token);
   assert.equal(checkDecision({ token_hash: "x", kind: "approve" }).error, "bad token");

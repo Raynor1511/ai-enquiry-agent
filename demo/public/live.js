@@ -223,7 +223,6 @@ function renderCalendar(s) {
   const frame = document.createElement("iframe");
   frame.src = s.calendar_url;
   frame.title = "Harbourline Bookings calendar (read-only)";
-  frame.loading = "lazy";
   frame.referrerPolicy = "no-referrer";
   $("calendar").append(frame);
 }
@@ -241,7 +240,7 @@ function render(s) {
   renderDecision(s);
   renderTimeline(s);
   renderCalendar(s);
-  if (s.retention_days) $("retention").textContent = `Everything made from your enquiry is deleted automatically after ${s.retention_days} days.`;
+  if (s.retention_days) $("retention").textContent = `Your enquiry and the records made from it are deleted automatically after ${s.retention_days} days.`;
 }
 
 let timer = null;

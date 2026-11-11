@@ -4,6 +4,10 @@ A Claude-powered agent for a small trades business. It reads every customer enqu
 
 > **Demo company.** Harbourline Plumbing & Heating (Bristol, UK) is fictional, and this is a portfolio project, not client work. Every customer and test enquiry uses reserved `example.*` email domains and Ofcom drama-range phone numbers.
 
+## Try the live demo
+
+**[enquiries.raynors.dev/demo](https://enquiries.raynors.dev/demo)**: send your own enquiry (or one of the examples: a quote, a gas emergency, a prompt-injection attempt), confirm it by email, and watch the agent classify it, look things up and draft a reply, step by step with timing and cost. Then do the business owner's part: approve, edit or reject the draft. If you approve, the reply is emailed to you. Your data is deleted after 7 days ([how the demo works](docs/demo.md)).
+
 ## What it does
 
 - **Reads** new Gmail messages and web-form submissions, skips anything it has seen before, and turns each one into the same record.
@@ -48,7 +52,7 @@ flowchart LR
     C & G & P & O --> L[(Audit log:<br/>every step, tokens, cost)]
 ```
 
-Seven n8n workflows do the work (intake, classify, draft, post for approval, Slack interactions, alerts and housekeeping), plus a protected one for evaluation runs ([pipeline](docs/pipeline.md)). Claude only reads and drafts: the MCP tools are read-only in code and at the database level, so every send, record change or booking waits for a person's click.
+Eight n8n workflows do the work (intake, classify, draft, post for approval, decide, Slack interactions, alerts and housekeeping), plus protected ones for the live demo page and for evaluation runs ([pipeline](docs/pipeline.md), [demo](docs/demo.md)). Claude only reads and drafts: the MCP tools are read-only in code and at the database level, so every send, record change or booking waits for a person's click.
 
 ## Safety and reliability
 
@@ -61,7 +65,7 @@ Seven n8n workflows do the work (intake, classify, draft, post for approval, Sla
 | Identity before disclosure | A customer is verified only by the email or phone on file; anyone else gets masked details and no history |
 | Error handling | Every workflow failure and every failed step (classification, draft, card, send, calendar) posts to #alerts, with repeats muted |
 | Least privilege | Separate database roles: read-only for the MCP server, a writer for n8n that can't delete, rewrite messages or change the schema, proven query by query |
-| Public surface | Only the form and Slack's webhook are reachable; Slack requests are signature-checked; rate limits stop form spam running up the bill |
+| Public surface | Only the form, the demo page and Slack's webhook are reachable; Slack requests are signature-checked; rate limits and daily caps stop spam running up the bill. The demo page confirms every address by email before anything runs, keeps its private links out of every log, and reads the database through one function that returns only the visitor's own enquiry ([demo](docs/demo.md)) |
 | Audit trail | Input, classification, tool calls, draft, checks, approver, final text, timing and token cost for every enquiry |
 | Secrets and data | Keys only in environment variables; exported workflows carry placeholders, never credentials; [data-protection notes](docs/data-protection.md) and a cleanup command for retention and erasure requests |
 
@@ -91,7 +95,7 @@ A: Yes. A boiler service would cost them £120 (£95 + £25 travel).
 
 After `npm run build`, Claude Code picks the server up from this folder's `.mcp.json`; for Claude Desktop and n8n see [docs/mcp-server.md](docs/mcp-server.md). Node 22 or later.
 
-Other tests: `node --test "n8n/test/*.test.mjs"` (69 pipeline tests) and `cd eval && npm install && npm test` (grader).
+Other tests: `node --test "n8n/test/*.test.mjs"` (76 pipeline tests), `cd demo && npm install && npm test` (the demo page service) and `cd eval && npm install && npm test` (grader).
 
 ## Adapting it
 
@@ -103,6 +107,7 @@ The business-specific parts are data files, two prompts and two small interfaces
 | --- | --- |
 | [`mcp-server/`](mcp-server) | The MCP server: `find_customer`, `get_services`, `check_service_area`, `get_available_slots`, with JSON and Postgres data stores and Google Calendar ([docs](docs/mcp-server.md)) |
 | [`n8n/`](n8n) | Pipeline logic (`src/`, unit-tested in `test/`), prompts, and the generated workflows (`workflows/`, credentials stripped), with build and deploy scripts |
+| [`demo/`](demo) | The live demo page: a small Node service with the form, confirm and live pages ([docs](docs/demo.md)) |
 | [`eval/`](eval) | 40 labelled enquiries and a 15-enquiry held-out set, the runner, the Claude grader, and the reports ([docs](eval/README.md)) |
 | [`seed/`](seed) | The fictional business: services and prices, policies, service area, customers, job history; the database schema and roles ([docs](docs/data-model.md)) |
 | [`scripts/`](scripts) | Setup (`.env`, database and roles, n8n credentials, Slack), test-set validation, and test-data cleanup |
@@ -118,6 +123,7 @@ The business-specific parts are data files, two prompts and two small interfaces
 | 4 | Slack approval and actions | Signed webhook, threaded replies, records, calendar holds ([pipeline](docs/pipeline.md#phase-4-approval-and-actions)) |
 | 5 | Reliability and safety | Alerts, least-privilege roles, rate limits, housekeeping, data protection ([pipeline](docs/pipeline.md#phase-5-reliability-and-safety)) |
 | 6 | Evaluation | Held-out set, fact-by-fact grading with a checked judge ([report](eval/reports/phase-6-evaluation.md)) |
+| 7 | Live demo | Self-serve page on a VPS: email-confirmed, rate-limited, data deleted after 7 days ([demo](docs/demo.md), [deploy](docs/deploy.md)) |
 
 ## Licence
 
