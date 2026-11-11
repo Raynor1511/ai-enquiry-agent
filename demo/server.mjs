@@ -24,6 +24,7 @@ const ASSETS = {
   "form.js": "text/javascript; charset=utf-8",
   "confirm.js": "text/javascript; charset=utf-8",
   "live.js": "text/javascript; charset=utf-8",
+  "theme.js": "text/javascript; charset=utf-8",
   "icon.svg": "image/svg+xml",
 };
 

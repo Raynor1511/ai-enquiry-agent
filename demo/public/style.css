@@ -16,10 +16,11 @@
   --bad-soft: #fbe9e7;
   --radius: 12px;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.08);
-  color-scheme: light dark;
+  color-scheme: light;
 }
+/* Dark colours: the visitor's system setting, unless they chose light with the switch (theme.js)... */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f141a;
     --card: #171e26;
     --ink: #e6ebf1;
@@ -35,7 +36,27 @@
     --bad: #ff8a80;
     --bad-soft: #3a1b19;
     --shadow: none;
+    color-scheme: dark;
   }
+}
+/* ...or because they chose dark. */
+:root[data-theme="dark"] {
+  --bg: #0f141a;
+  --card: #171e26;
+  --ink: #e6ebf1;
+  --muted: #9aa6b5;
+  --line: #29333f;
+  --brand: #4fb3bf;
+  --brand-ink: #071417;
+  --brand-soft: #16343a;
+  --ok: #6fd39a;
+  --ok-soft: #15301f;
+  --warn: #f2c25b;
+  --warn-soft: #33290f;
+  --bad: #ff8a80;
+  --bad-soft: #3a1b19;
+  --shadow: none;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -55,6 +76,11 @@ a { color: var(--brand); }
 .brand { margin: 0; font-weight: 700; font-size: 18px; display: flex; align-items: center; gap: 8px; }
 .brand span { font-weight: 500; color: var(--muted); }
 .tag { margin: 0; font-size: 13px; color: var(--muted); }
+.top-right { display: flex; align-items: center; gap: 12px; }
+.theme-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font-size: 13px; color: var(--muted); }
+.theme-toggle:hover { color: var(--ink); border-color: var(--muted); }
+.theme-toggle svg { width: 16px; height: 16px; flex: none; }
+.theme-toggle[hidden], .theme-toggle svg[hidden] { display: none; }
 
 h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.2; margin: 32px 0 12px; letter-spacing: -0.01em; }
 h2 { font-size: 18px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
@@ -95,7 +121,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 button.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 600; }
 button.big { padding: 14px 28px; font-size: 18px; margin: 8px 0 16px; }
 button.ghost { background: transparent; }
-button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+button.danger { background: var(--bad); border-color: var(--bad); color: var(--card); font-weight: 600; }
 button.link { border: 0; background: none; padding: 0; color: var(--brand); text-decoration: underline; }
 .chip { padding: 6px 12px; border-radius: 999px; font-size: 14px; background: var(--brand-soft); border-color: transparent; color: var(--ink); }
 
@@ -129,7 +155,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--brand); text
 .badges { display: flex; gap: 6px; flex-wrap: wrap; }
 .badge { font-size: 13px; padding: 3px 10px; border-radius: 999px; background: var(--brand-soft); font-weight: 600; text-transform: capitalize; }
 .badge.muted { background: var(--bg); font-weight: 500; color: var(--muted); }
-.badge.urgency-emergency { background: var(--bad); color: #fff; }
+.badge.urgency-emergency { background: var(--bad); color: var(--card); }
 .badge.urgency-high { background: var(--warn-soft); color: var(--warn); }
 .flag { padding: 10px 12px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
 .flag p { margin: 6px 0 0; }

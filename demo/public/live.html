@@ -6,6 +6,7 @@
   <meta name="robots" content="noindex">
   <title>Your enquiry, live · Harbourline</title>
   <link rel="icon" href="/demo/assets/icon.svg" type="image/svg+xml">
+  <script src="/demo/assets/theme.js"></script>
   <link rel="stylesheet" href="/demo/assets/style.css">
   <script src="/demo/assets/live.js" defer></script>
 </head>
@@ -13,7 +14,14 @@
   <header class="top">
     <div class="wrap">
       <p class="brand"><img src="/demo/assets/icon.svg" alt="" width="28" height="28"> Harbourline <span>live demo</span></p>
-      <p class="tag">Fictional company · real AI pipeline</p>
+      <div class="top-right">
+        <p class="tag">Fictional company · real AI pipeline</p>
+        <button type="button" class="theme-toggle" id="theme-toggle" hidden>
+          <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M21 14.5A9 9 0 0 1 9.5 3a.6.6 0 0 0-.8-.7A10 10 0 1 0 21.7 15.3a.6.6 0 0 0-.7-.8z"/></svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true" hidden><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g></svg>
+          <span class="theme-label">Dark</span>
+        </button>
+      </div>
     </div>
   </header>
 
