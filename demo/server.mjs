@@ -8,6 +8,9 @@
 // enquiry go through the real pipeline; then approves, edits or rejects the draft, as the business would
 // in Slack. Private links carry their token in the URL fragment, which browsers never send to servers,
 // so tokens never reach a log; the API takes them in POST bodies. No framework: node:http and pg.
+//
+// DEMO_ALLOWED_ORIGINS (optional, comma-separated) lets other sites' forms call /demo/api/start, so a
+// business website can send its own enquiry form into the demo. Every other call stays same-origin only.
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -53,7 +56,10 @@ const START_ERRORS = {
  * The request handler. Dependencies are passed in so tests can run it without n8n or a database:
  *   n8n(path, body, timeoutMs) -> { status, json }    view(tokenHash) -> demo_view() result or null
  */
-export function createApp({ n8n, view, publicHost, calendarUrl = null, log = () => {}, files = loadFiles(), origin = `https://${publicHost}` }) {
+export function createApp({ n8n, view, publicHost, calendarUrl = null, log = () => {}, files = loadFiles(), origin = `https://${publicHost}`, formOrigins = [] }) {
+  /** CORS headers for another site's form, if that site is allowed to call /demo/api/start. */
+  const formCors = (o) => (typeof o === "string" && formOrigins.includes(o) ? { "Access-Control-Allow-Origin": o, Vary: "Origin" } : null);
+
   const send = (res, status, body, type = "application/json; charset=utf-8", extra = {}) => {
     res.writeHead(status, { ...securityHeaders(), "Content-Type": type, "Cache-Control": "no-store", ...extra });
     res.end(type.startsWith("application/json") ? JSON.stringify(body) : body);
@@ -128,7 +134,18 @@ export function createApp({ n8n, view, publicHost, calendarUrl = null, log = () 
     const url = new URL(req.url, origin);
     const p = url.pathname;
     let status = 500;
+    let cors = {};
     try {
+      if (req.method === "OPTIONS") {
+        // Preflight for another site's form (a JSON POST from another origin always sends one).
+        const allowed = p === "/demo/api/start" ? formCors(req.headers.origin) : null;
+        if (!allowed) return send(res, (status = 404), { ok: false });
+        res.writeHead((status = 204), {
+          ...securityHeaders(), ...allowed,
+          "Access-Control-Allow-Methods": "POST", "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "600",
+        });
+        return res.end();
+      }
       if (req.method === "GET" || req.method === "HEAD") {
         if (p === "/demo/healthz") return send(res, (status = 200), { ok: true });
         if (PAGES[p]) return send(res, (status = 200), files.pages[PAGES[p]], "text/html; charset=utf-8");
@@ -140,15 +157,18 @@ export function createApp({ n8n, view, publicHost, calendarUrl = null, log = () 
       }
       const action = p.startsWith("/demo/api/") ? p.slice("/demo/api/".length) : null;
       if (req.method !== "POST" || !action || !Object.hasOwn(api, action)) return send(res, (status = 404), { ok: false });
-      // Only this site's own pages may call the API (a browser always sends Origin on a POST).
-      if (req.headers.origin !== origin) return send(res, (status = 403), { ok: false });
+      // Only this site's own pages may call the API (a browser always sends Origin on a POST), plus the
+      // allowed forms for "start".
+      const other = action === "start" ? formCors(req.headers.origin) : null;
+      if (req.headers.origin !== origin && !other) return send(res, (status = 403), { ok: false });
+      cors = other ?? {};
       if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return send(res, (status = 415), { ok: false });
       const body = await readJson(req);
       const [code, payload] = await api[action](body);
-      return send(res, (status = code), payload);
+      return send(res, (status = code), payload, undefined, cors);
     } catch (err) {
       status = err.status ?? 502;
-      if (!res.headersSent) send(res, status, { ok: false, status: "error" });
+      if (!res.headersSent) send(res, status, { ok: false, status: "error" }, undefined, cors);
       if (!err.status) log(`error on ${req.method} ${p}: ${err.message}`);
     } finally {
       log(`${req.method} ${p} ${status} ${Date.now() - started}ms`);
@@ -194,6 +214,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const key = requireEnv("DEMO_N8N_KEY", (v) => /^[0-9a-f]{64}$/.test(v));
   const dbUrl = requireEnv("DEMO_DB_URL", (v) => /^postgres(ql)?:\/\//.test(v));
   const n8nUrl = requireEnv("N8N_INTERNAL_URL", (v) => /^https?:\/\//.test(v));
+  const formOrigins = (process.env.DEMO_ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+  for (const o of formOrigins) {
+    if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(o)) {
+      console.error(`demo: DEMO_ALLOWED_ORIGINS entry "${o}" is not an https origin like https://www.example.com`);
+      process.exit(1);
+    }
+  }
   const calendar = process.env.DEMO_CALENDAR_EMBED_URL ?? "";
   const calendarUrl = /^https:\/\/calendar\.google\.com\/calendar\/embed\?/.test(calendar) ? calendar : null;
   if (calendar && !calendarUrl) console.error("demo: DEMO_CALENDAR_EMBED_URL is not a Google Calendar embed address; the page shows no calendar");
@@ -201,12 +228,12 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const pool = new pg.Pool({ connectionString: dbUrl, max: 3, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 10_000 });
   pool.on("error", (err) => console.error(`demo: database pool error: ${err.message}`));
   const view = async (hash) => (await pool.query("select demo_view($1) as v", [hash])).rows[0]?.v ?? null;
-  const app = createApp({ n8n: n8nClient(n8nUrl, key), view, publicHost, calendarUrl, log: (m) => console.log(m) });
+  const app = createApp({ n8n: n8nClient(n8nUrl, key), view, publicHost, calendarUrl, formOrigins, log: (m) => console.log(m) });
   const port = Number(process.env.PORT || 8080);
   const server = createServer(app);
   server.requestTimeout = 150_000;
   server.headersTimeout = 20_000;
-  server.listen(port, "0.0.0.0", () => console.log(`demo: listening on :${port} for https://${publicHost}/demo${calendarUrl ? " (with calendar)" : ""}`));
+  server.listen(port, "0.0.0.0", () => console.log(`demo: listening on :${port} for https://${publicHost}/demo${calendarUrl ? " (with calendar)" : ""}${formOrigins.length ? `; forms allowed from ${formOrigins.join(", ")}` : ""}`));
   const stop = () => server.close(() => pool.end().then(() => process.exit(0)));
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);

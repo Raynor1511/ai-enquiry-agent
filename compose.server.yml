@@ -90,6 +90,8 @@ services:
       DEMO_N8N_KEY: ${DEMO_N8N_KEY:?DEMO_N8N_KEY is empty in .env (node scripts/init-env.mjs generates it)}
       N8N_INTERNAL_URL: http://n8n:5678
       DEMO_CALENDAR_EMBED_URL: ${DEMO_CALENDAR_EMBED_URL:-}
+      # Optional: other sites whose own enquiry form may send into the demo (comma-separated https origins).
+      DEMO_ALLOWED_ORIGINS: ${DEMO_ALLOWED_ORIGINS:-}
     networks: [internal]
     depends_on: [n8n]
     read_only: true

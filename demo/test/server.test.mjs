@@ -100,6 +100,49 @@ test("the API refuses other sites, other content types, big bodies and bad JSON"
   });
 });
 
+test("an allowed site's form may call start (with CORS), but nothing else, and other sites stay refused", async () => {
+  const FORM_SITE = "https://www.plumber.example.org";
+  const calls = [];
+  const n8n = async (hook, body) => { calls.push(hook); return { status: 200, json: { ok: true } }; };
+  await withServer({ n8n, view: async () => null, formOrigins: [FORM_SITE] }, async (base) => {
+    // Preflight: allowed for start only, and only for the listed site.
+    const pre = await fetch(`${base}/demo/api/start`, { method: "OPTIONS", headers: { Origin: FORM_SITE, "Access-Control-Request-Method": "POST" } });
+    assert.equal(pre.status, 204);
+    assert.equal(pre.headers.get("access-control-allow-origin"), FORM_SITE);
+    assert.equal(pre.headers.get("access-control-allow-methods"), "POST");
+    assert.match(pre.headers.get("access-control-allow-headers"), /content-type/i);
+    assert.equal((await fetch(`${base}/demo/api/confirm`, { method: "OPTIONS", headers: { Origin: FORM_SITE } })).status, 404);
+    assert.equal((await fetch(`${base}/demo/api/start`, { method: "OPTIONS", headers: { Origin: "https://evil.example.net" } })).status, 404);
+
+    // The form itself, and its validation errors, come back readable by that site.
+    const ok = await post(base, "/demo/api/start", submission, { Origin: FORM_SITE });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get("access-control-allow-origin"), FORM_SITE);
+    assert.equal(ok.headers.get("vary"), "Origin");
+    const bad = await post(base, "/demo/api/start", { ...submission, message: "short" }, { Origin: FORM_SITE });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.headers.get("access-control-allow-origin"), FORM_SITE);
+
+    // Confirm, state and decide stay same-origin only, and unlisted sites can't start.
+    for (const action of ["confirm", "state", "decide"]) {
+      const res = await post(base, `/demo/api/${action}`, { t: newToken().token, kind: "approve" }, { Origin: FORM_SITE });
+      assert.equal(res.status, 403, action);
+      assert.equal(res.headers.get("access-control-allow-origin"), null, action);
+    }
+    assert.equal((await post(base, "/demo/api/start", submission, { Origin: "https://evil.example.net" })).status, 403);
+    // The demo's own page still works and gets no CORS header.
+    const own = await post(base, "/demo/api/start", submission);
+    assert.equal(own.status, 200);
+    assert.equal(own.headers.get("access-control-allow-origin"), null);
+    assert.deepEqual(calls, ["harbourline-demo-start", "harbourline-demo-start"]);
+  });
+  // Without the setting, nothing changes.
+  await withServer({ n8n, view: async () => null }, async (base) => {
+    assert.equal((await post(base, "/demo/api/start", submission, { Origin: FORM_SITE })).status, 403);
+    assert.equal((await fetch(`${base}/demo/api/start`, { method: "OPTIONS", headers: { Origin: FORM_SITE } })).status, 404);
+  });
+});
+
 test("confirm, state and decide use only the token's hash, and never log the token", async () => {
   const { token, token_hash } = newToken();
   const seen = [];
